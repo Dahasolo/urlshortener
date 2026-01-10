@@ -21,3 +21,9 @@ vendor/
 # IDEs directories
 .idea
 .vscode
+
+**/.DS_Store
+Makefile
+run_iter1.sh
+cmd/client
+internal/handler/handler_test.go
