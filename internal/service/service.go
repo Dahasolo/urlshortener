@@ -6,33 +6,38 @@ import (
 	"github.com/Dahasolo/urlshortener/internal/repository"
 )
 
-// Base52
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-// генерация 8-символьного случайного ID из letters.
-func generateID() string {
-	b := make([]byte, 8)
+type Service struct {
+	repo repository.URLRepository
+}
 
+func NewService(repo repository.URLRepository) *Service {
+	return &Service{repo: repo}
+}
+
+// Генерация 8-символьного случайного ID из letters.
+func (s *Service) generateID() string {
+	b := make([]byte, 8)
 	_, err := rand.Read(b)
 	if err != nil {
-		// заглушка
-		return "FallBackID"
+		return "FallbackID" // заглушка
 	}
-
 	for i := range b {
 		// b[i] % 52 - индекс в letters
 		b[i] = letters[int(b[i])%len(letters)]
 	}
-
 	return string(b)
 }
 
-func Shorten(url string) string {
-	id := generateID() // ← теперь "EwHXdJfB", безопасно и надёжно
-	repository.Save(id, url)
+// Cокращение URL и сохранение в репозиторий.
+func (s *Service) Shorten(url string) string {
+	id := s.generateID()
+	s.repo.Save(id, url)
 	return id
 }
 
-func Resolve(id string) (string, bool) {
-	return repository.Get(id)
+// Поиск оригинального URL по ID.
+func (s *Service) Resolve(id string) (string, bool) {
+	return s.repo.Get(id)
 }
