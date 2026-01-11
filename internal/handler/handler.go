@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Dahasolo/urlshortener/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 func ShortenHandler(svc *service.Service) http.HandlerFunc {
@@ -35,11 +36,14 @@ func RedirectHandler(svc *service.Service) http.HandlerFunc {
 			http.Error(w, "only GET", http.StatusMethodNotAllowed)
 			return
 		}
-		id := r.URL.Path[1:]
+		// id := r.URL.Path[1:]
+		id := chi.URLParam(r, "id")
+
 		if id == "" {
 			http.Error(w, "empty ID", http.StatusBadRequest)
 			return
 		}
+
 		url, ok := svc.Resolve(id)
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)

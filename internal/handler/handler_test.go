@@ -1,14 +1,16 @@
 package handler
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/Dahasolo/urlshortener/internal/service"
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
 )
 
 // мок-реализация интерфейса repository.URLRepository
@@ -25,6 +27,17 @@ func (m *mockRepo) Save(id, url string) {
 func (m *mockRepo) Get(id string) (string, bool) {
 	url, ok := m.store[id]
 	return url, ok
+}
+
+// newChiRequest создаёт *http.Request с контекстом Chi, содержащим указанные URL-параметры.
+func newChiRequest(method, path string, body io.Reader, params map[string]string) *http.Request {
+	req := httptest.NewRequest(method, path, body)
+	routeCtx := chi.NewRouteContext()
+	for k, v := range params {
+		routeCtx.URLParams.Add(k, v)
+	}
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx)
+	return req.WithContext(ctx)
 }
 
 func TestShortenHandler(t *testing.T) {
@@ -70,7 +83,8 @@ func TestShortenHandler(t *testing.T) {
 			handler := ShortenHandler(svc)
 
 			// Создание фейкового запроса
-			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			// req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			req := newChiRequest(tt.method, "/", strings.NewReader(tt.body), nil)
 			w := httptest.NewRecorder()
 
 			// Вызов хендлера
@@ -142,7 +156,12 @@ func TestRedirectHandler(t *testing.T) {
 			handler := RedirectHandler(svc)
 
 			// Создание фейкового запроса
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			// req := httptest.NewRequest(tt.method, tt.path, nil)
+			var params map[string]string
+			if len(tt.path) > 1 {
+				params = map[string]string{"id": tt.path[1:]}
+			}
+			req := newChiRequest(tt.method, tt.path, nil, params)
 			w := httptest.NewRecorder()
 
 			// Вызов хендлера
