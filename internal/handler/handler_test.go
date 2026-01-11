@@ -80,7 +80,8 @@ func TestShortenHandler(t *testing.T) {
 			// Подготовка зависимостей
 			repo := newMockRepo()
 			svc := service.NewService(repo)
-			handler := ShortenHandler(svc)
+			// handler := ShortenHandler(svc)
+			handler := ShortenHandler(svc, "http://localhost:8080/")
 
 			// Создание фейкового запроса
 			// req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
