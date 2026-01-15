@@ -32,27 +32,32 @@ func TestShortenHandler(t *testing.T) {
 		body           string
 		expectedCode   int
 		expectLocation bool // ожидаем ли тело с короткой ссылкой
+		expectSave     bool
 	}{
 		{
 			name:           "valid POST with URL",
 			body:           "https://example.com",
 			expectedCode:   http.StatusCreated,
 			expectLocation: true,
+			expectSave:     true,
 		},
 		{
 			name:           "valid POST with whitespace",
 			body:           "	https://example.com ",
 			expectedCode:   http.StatusCreated,
 			expectLocation: true,
+			expectSave:     true,
 		},
 		{
 			name:         "empty body",
 			expectedCode: http.StatusBadRequest,
+			expectSave:   false,
 		},
 		{
 			name:         "body is whitespace only",
 			body:         " \t\n",
 			expectedCode: http.StatusBadRequest,
+			expectSave:   false,
 		},
 	}
 
@@ -60,7 +65,9 @@ func TestShortenHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Подготовка зависимостей
 			repo := &mocks.URLRepository{}
-			repo.On("Save", mock.Anything, mock.Anything).Return(nil).Once()
+			if tt.expectSave {
+				repo.On("Save", mock.Anything, mock.Anything).Return(nil).Once()
+			}
 			svc := service.NewService(repo)
 			handler := ShortenHandler(svc, "http://localhost:8080/")
 
