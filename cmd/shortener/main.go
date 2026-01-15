@@ -1,31 +1,30 @@
 package main
 
 import (
-	"net/http"
+	"fmt"
+	"os"
 
+	"github.com/Dahasolo/urlshortener/internal/app"
 	"github.com/Dahasolo/urlshortener/internal/config"
-	"github.com/Dahasolo/urlshortener/internal/handler"
 	"github.com/Dahasolo/urlshortener/internal/repository"
+	"github.com/Dahasolo/urlshortener/internal/router"
 	"github.com/Dahasolo/urlshortener/internal/service"
-	"github.com/go-chi/chi/v5"
 )
 
 func main() {
-	cfg := config.MustLoad() // загружаем конфиг
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Println("config load error:", err)
+		os.Exit(1)
+	}
 
 	repo := repository.NewInMemoryURLRepo()
 	svc := service.NewService(repo)
 
-	// mux := http.NewServeMux()
-	// mux.HandleFunc("/", handler.ShortenHandler(svc))
-	// mux.HandleFunc("/{id}", handler.RedirectHandler(svc)) // ← ЭТО НЕ РАБОТАЛО!
-	// http.ListenAndServe(":8080", mux)
+	r := router.NewRouter(svc, cfg.BaseURL)
 
-	r := chi.NewRouter()
-	// r.Post("/", handler.ShortenHandler(svc))
-	r.Post("/", handler.ShortenHandler(svc, cfg.BaseURL))
-	r.Get("/{id}", handler.RedirectHandler(svc))
-
-	// http.ListenAndServe(":8080", r)
-	http.ListenAndServe(cfg.ServerAddress, r)
+	if err := app.Run(cfg.ServerAddress, r); err != nil {
+		fmt.Println("server error:", err)
+		os.Exit(1)
+	}
 }

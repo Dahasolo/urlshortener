@@ -2,42 +2,56 @@ package service
 
 import (
 	"crypto/rand"
-
-	"github.com/Dahasolo/urlshortener/internal/repository"
+	"fmt"
 )
 
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-type Service struct {
-	repo repository.URLRepository
+// URLRepository определяет операции для работы с хранилищем коротких URL.
+type URLRepository interface {
+	Save(id, url string) error
+	Get(id string) (string, bool)
 }
 
-func NewService(repo repository.URLRepository) *Service {
+// Service реализует сервис сокращения URL.
+type Service struct {
+	repo URLRepository
+}
+
+// NewService создаёт новый экземпляр Service с заданным репозиторием.
+func NewService(repo URLRepository) *Service {
 	return &Service{repo: repo}
 }
 
-// Генерация 8-символьного случайного ID из letters.
-func (s *Service) generateID() string {
+// generateID генерирует 8-символьный случайный ID из letters.
+func (s *Service) generateID() (string, error) {
 	b := make([]byte, 8)
-	_, err := rand.Read(b)
-	if err != nil {
-		return "FallbackID" // заглушка
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
 	}
 	for i := range b {
 		// b[i] % 52 - индекс в letters
 		b[i] = letters[int(b[i])%len(letters)]
 	}
-	return string(b)
+	return string(b), nil
 }
 
-// Cокращение URL и сохранение в репозиторий.
-func (s *Service) Shorten(url string) string {
-	id := s.generateID()
-	s.repo.Save(id, url)
-	return id
+// Shorten сокращает URL и сохраняет в репозиторий.
+func (s *Service) Shorten(url string) (string, error) {
+	const maxRetries = 10
+	for i := 0; i < maxRetries; i++ {
+		id, err := s.generateID()
+		if err != nil {
+			return "", fmt.Errorf("generate ID failed: %w", err)
+		}
+		if err := s.repo.Save(id, url); err == nil {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique ID after %d attempts", maxRetries)
 }
 
-// Поиск оригинального URL по ID.
+// Resolve возвращает оригинальный URL по короткому ID.
 func (s *Service) Resolve(id string) (string, bool) {
 	return s.repo.Get(id)
 }

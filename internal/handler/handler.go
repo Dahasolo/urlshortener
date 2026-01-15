@@ -3,6 +3,8 @@ package handler
 import (
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/Dahasolo/urlshortener/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -10,26 +12,30 @@ import (
 
 func ShortenHandler(svc *service.Service, baseURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "only POST", http.StatusMethodNotAllowed)
-			return
-		}
-
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
+			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
 
-		url := string(body)
-		if url == "" {
-			http.Error(w, "empty", http.StatusBadRequest)
+		originalURL := strings.TrimSpace(string(body))
+		if originalURL == "" {
+			http.Error(w, "empty URL", http.StatusBadRequest)
 			return
 		}
 
-		id := svc.Shorten(url)
-		// w.Write([]byte("http://localhost:8080/" + id))
-		shortURL := baseURL + id
+		if _, err = url.Parse(originalURL); err != nil {
+			http.Error(w, "not valid URL", http.StatusBadRequest)
+			return
+		}
+
+		id, err := svc.Shorten(originalURL)
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		shortURL, _ := url.JoinPath(baseURL, id)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(shortURL))
 	}
@@ -37,12 +43,6 @@ func ShortenHandler(svc *service.Service, baseURL string) http.HandlerFunc {
 
 func RedirectHandler(svc *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "only GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// id := r.URL.Path[1:]
 		id := chi.URLParam(r, "id")
 
 		if id == "" {
@@ -50,13 +50,13 @@ func RedirectHandler(svc *service.Service) http.HandlerFunc {
 			return
 		}
 
-		url, ok := svc.Resolve(id)
+		fullURL, ok := svc.Resolve(id)
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		w.Header().Set("Location", url)
+		w.Header().Set("Location", fullURL)
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}
 }

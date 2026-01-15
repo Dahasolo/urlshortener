@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"flag"
-	"strings"
+	"fmt"
+	"net/url"
 )
 
 // Config содержит параметры запуска сервиса.
@@ -11,8 +13,8 @@ type Config struct {
 	BaseURL       string // базовый URL для коротких ссылок (-b)
 }
 
-// MustLoad парсит флаги командной строки и возвращает конфигурацию.
-func MustLoad() *Config {
+// Load парсит флаги командной строки и возвращает Config.
+func Load() (*Config, error) {
 	var cfg Config
 
 	flag.StringVar(&cfg.ServerAddress, "a", ":8080", "адрес запуска HTTP-сервера")
@@ -20,10 +22,26 @@ func MustLoad() *Config {
 
 	flag.Parse()
 
-	// Гарантируем, что BaseURL заканчивается на "/"
-	if !strings.HasSuffix(cfg.BaseURL, "/") {
-		cfg.BaseURL += "/"
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	return &cfg
+	return &cfg, nil
+}
+
+// Validate проверяет корректность полей конфигурации.
+func (c *Config) Validate() error {
+	if c.ServerAddress == "" {
+		return errors.New("server address is required")
+	}
+
+	if c.BaseURL == "" {
+		return errors.New("base URL is required")
+	}
+
+	if _, err := url.Parse(c.BaseURL); err != nil {
+		return fmt.Errorf("invalid base URL: %w", err)
+	}
+
+	return nil
 }
