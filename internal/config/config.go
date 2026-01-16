@@ -40,7 +40,7 @@ func (c *Config) Validate() error {
 	}
 
 	if _, err := url.Parse(c.BaseURL); err != nil {
-		return fmt.Errorf("invalid base URL: %w", err)
+		return fmt.Errorf("invalid base URL %q: %w", c.BaseURL, err)
 	}
 
 	return nil

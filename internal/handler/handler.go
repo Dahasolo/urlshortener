@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,7 +32,8 @@ func ShortenHandler(svc *service.Service, baseURL string) http.HandlerFunc {
 
 		id, err := svc.Shorten(originalURL)
 		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			log.Printf("Shorten failed: url=%q err=%v", originalURL, err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
