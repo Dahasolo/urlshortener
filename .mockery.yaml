@@ -1,0 +1,6 @@
+all: false
+dir: internal/service
+name: URLRepository
+output: internal/mocks
+filename: mock_url_repository.go
+log-level: info

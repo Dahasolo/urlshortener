@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -25,7 +26,7 @@ func (r *InMemoryURLRepo) Save(id, url string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.urls[id]; exists {
-		return ErrAlreadyExists
+		return fmt.Errorf("ID %s for URL %q already exists: %w", id, url, ErrAlreadyExists)
 	}
 	r.urls[id] = url
 	return nil

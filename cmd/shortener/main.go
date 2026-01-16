@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"log"
 
 	"github.com/Dahasolo/urlshortener/internal/app"
 	"github.com/Dahasolo/urlshortener/internal/config"
@@ -14,8 +13,7 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Println("config load error:", err)
-		os.Exit(1)
+		log.Fatal("config load error:", err)
 	}
 
 	repo := repository.NewInMemoryURLRepo()
@@ -24,7 +22,6 @@ func main() {
 	r := router.NewRouter(svc, cfg.BaseURL)
 
 	if err := app.Run(cfg.ServerAddress, r); err != nil {
-		fmt.Println("server error:", err)
-		os.Exit(1)
+		log.Fatal("server error:", err)
 	}
 }
