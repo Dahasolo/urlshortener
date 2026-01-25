@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net/url"
+	"os"
 )
 
 // Config содержит параметры запуска сервиса.
@@ -13,20 +14,44 @@ type Config struct {
 	BaseURL       string // базовый URL для коротких ссылок (-b)
 }
 
-// Load парсит флаги командной строки и возвращает Config.
+// Load загружает конфигурацию с учётом приоритета:
+// 1. Переменные окружения (SERVER_ADDRESS, BASE_URL)
+// 2. Флаги командной строки (-a, -b)
+// 3. Значения по умолчанию
 func Load() (*Config, error) {
-	var cfg Config
+	// Значения по умолчанию
+	serverAddrDefault := ":8080"
+	baseURLDefault := "http://localhost:8080/"
 
-	flag.StringVar(&cfg.ServerAddress, "a", ":8080", "адрес запуска HTTP-сервера")
-	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080/", "базовый адрес для коротких URL")
+	// Флаги командной строки
+	var serverAddrFlag, baseURLFlag string
+	flag.StringVar(&serverAddrFlag, "a", serverAddrDefault, "адрес запуска HTTP-сервера")
+	flag.StringVar(&baseURLFlag, "b", baseURLDefault, "базовый адрес для коротких URL")
 
 	flag.Parse()
+
+	// Переменные окружения
+	serverAddr := getEnvOrDefault("SERVER_ADDRESS", serverAddrFlag)
+	baseURL := getEnvOrDefault("BASE_URL", baseURLFlag)
+
+	cfg := &Config{
+		ServerAddress: serverAddr,
+		BaseURL:       baseURL,
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
+}
+
+// getEnvOrDefault возвращает значение переменной окружения, если пустое - fallback.
+func getEnvOrDefault(envVar, fallback string) string {
+	if value := os.Getenv(envVar); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // Validate проверяет корректность полей конфигурации.
