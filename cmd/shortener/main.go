@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 
 	"github.com/Dahasolo/urlshortener/internal/app"
 	"github.com/Dahasolo/urlshortener/internal/config"
@@ -10,7 +11,6 @@ import (
 	"github.com/Dahasolo/urlshortener/internal/repository"
 	"github.com/Dahasolo/urlshortener/internal/router"
 	"github.com/Dahasolo/urlshortener/internal/service"
-	"go.uber.org/zap"
 )
 
 var flagLogLevel string
@@ -32,9 +32,10 @@ func main() {
 	r := router.NewRouter(svc, cfg.BaseURL)
 
 	routerWithLogging := logger.HTTPLogger(r)
-	logger.Log.Info("running server on", zap.String("address", cfg.ServerAddress))
+	logger.Log.Info("running server on", "address", cfg.ServerAddress)
 
 	if err := app.Run(cfg.ServerAddress, routerWithLogging); err != nil {
-		logger.Log.Fatal("server error:", zap.Error(err))
+		logger.Log.Error("server error", "error", err)
+		os.Exit(1)
 	}
 }
