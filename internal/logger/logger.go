@@ -1,32 +1,37 @@
 package logger
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
-
-	"go.uber.org/zap"
 )
 
-// Log - глобальный синглтон логгера.
-var Log *zap.Logger = zap.NewNop()
+// Log - глобальный логгер slog.
+var Log *slog.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 // Initialize инициализирует синглтон логера с необходимым уровнем логирования.
 func Initialize(level string) error {
-	lvl, err := zap.ParseAtomicLevel(level)
+	lvl, err := parseLevel(level)
 	if err != nil {
 		return err
 	}
 
-	cfg := zap.NewProductionConfig()
-	cfg.Level = lvl
-
-	zl, err := cfg.Build()
-	if err != nil {
-		return err
-	}
-
-	Log = zl
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})
+	Log = slog.New(h)
+	slog.SetDefault(Log)
 	return nil
+}
+
+// parseLevel парсит строковый уровень в slog.Leveler.
+func parseLevel(levelStr string) (slog.Leveler, error) {
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(strings.ToUpper(levelStr))); err != nil {
+		return nil, fmt.Errorf("invalid log level %q: %w", levelStr, err)
+	}
+	return &lvl, nil
 }
 
 // responseData хранит сведения об ответе: статус и размер тела.
@@ -79,11 +84,11 @@ func HTTPLogger(h http.Handler) http.Handler {
 		duration := time.Since(start)
 
 		Log.Info("handled request",
-			zap.String("uri", r.RequestURI),
-			zap.String("method", r.Method),
-			zap.Int("status", data.status),
-			zap.Int("size", data.size),
-			zap.Duration("duration", duration),
+			slog.String("uri", r.RequestURI),
+			slog.String("method", r.Method),
+			slog.Int("status", status),
+			slog.Int("size", data.size),
+			slog.Duration("duration", duration),
 		)
 	})
 }
