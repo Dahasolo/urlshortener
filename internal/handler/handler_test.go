@@ -155,3 +155,103 @@ func TestRedirectHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestShortenJSONHandler(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		contentType  string
+		prepareRepo  func(r *mocks.URLRepository)
+		expectedCode int
+		expectJSON   bool // ожидаем ли валидный JSON в ответе
+	}{
+		{
+			name:        "valid JSON",
+			body:        `{"url": "https://example.com"}`,
+			contentType: "application/json",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Save", mock.Anything, "https://example.com").Return(nil).Once()
+			},
+			expectedCode: http.StatusCreated,
+			expectJSON:   true,
+		},
+		{
+			name:         "invalid Content-Type",
+			body:         `{"url": "https://example.com"}`,
+			contentType:  "text/plain",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "missing Content-Type",
+			body:         `{"url": "https://example.com"}`,
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "empty JSON",
+			body:         `{}`,
+			contentType:  "application/json",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "missing url field",
+			body:         `{"some_field": "https://example.com"}`,
+			contentType:  "application/json",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "invalid JSON syntax",
+			body:         `{"url": "https://example.com"`,
+			contentType:  "application/json",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "relative path",
+			body:         `{"url": "/path"}`,
+			contentType:  "application/json",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:        "URL with path",
+			body:        `{"url": "https://example.com/path/to/page"}`,
+			contentType: "application/json",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Save", mock.Anything, "https://example.com/path/to/page").Return(nil).Once()
+			},
+			expectedCode: http.StatusCreated,
+			expectJSON:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+			if tt.prepareRepo != nil {
+				tt.prepareRepo(repo)
+			}
+			svc := service.NewService(repo)
+			handler := ShortenJSONHandler(svc, "http://localhost:8080/")
+
+			// Создание фейкового запроса
+			req := newChiRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body), nil)
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// Если ожидаем валидный JSON - проверяем формат
+			if tt.expectJSON {
+				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+				assert.Regexp(t, `^{"result":"http://localhost:8080/[a-zA-Z0-9]+"}`, w.Body.String())
+			}
+
+			repo.AssertExpectations(t)
+		})
+	}
+}
