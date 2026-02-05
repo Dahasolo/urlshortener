@@ -7,6 +7,7 @@ import (
 
 	"github.com/Dahasolo/urlshortener/internal/app"
 	"github.com/Dahasolo/urlshortener/internal/config"
+	"github.com/Dahasolo/urlshortener/internal/handler/middleware"
 	"github.com/Dahasolo/urlshortener/internal/logger"
 	"github.com/Dahasolo/urlshortener/internal/repository"
 	"github.com/Dahasolo/urlshortener/internal/router"
@@ -31,9 +32,9 @@ func main() {
 	svc := service.NewService(repo)
 	r := router.NewRouter(svc, cfg.BaseURL)
 
-	routerWithLogging := logger.HTTPLogger(r)
-	logger.Log.Info("running server on", "address", cfg.ServerAddress)
+	routerWithLogging := logger.HTTPLogger(middleware.GzipMiddleware(r))
 
+	logger.Log.Info("running server on", "address", cfg.ServerAddress)
 	if err := app.Run(cfg.ServerAddress, routerWithLogging); err != nil {
 		logger.Log.Error("server error", "error", err)
 		os.Exit(1)

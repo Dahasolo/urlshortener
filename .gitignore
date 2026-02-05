@@ -23,6 +23,6 @@ vendor/
 .vscode
 
 **/.DS_Store
-Makefile
+Makefile.debug
 run.sh
 cmd/client
