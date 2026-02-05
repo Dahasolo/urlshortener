@@ -1,0 +1,37 @@
+# По умолчанию — запуск
+default: run
+
+.PHONY: default help build run test clean
+
+help:
+	@echo "Доступные команды:"
+	@echo "  make          - собрать и запустить"
+	@echo "  make build    - собрать бинарник"
+	@echo "  make run      - запустить (если уже собран)"
+	@echo "  make test     - запустить тесты"
+	@echo "  make clean    - удалить бинарник"
+
+# Сборка
+build:
+	cd ./cmd/shortener && go build -o shortener .
+
+# Запуск
+run: build
+	./cmd/shortener/shortener
+
+# Тесты
+test:
+	go test -v ./...
+
+# Очистка
+clean:
+	rm -f ./cmd/shortener/shortener
+
+# Генерация мока из .mockery.yaml
+mock:
+	mockery
+
+# Генерация нового мока Handler для тестирования gzip
+mock_handler:
+	mockery --all=false --dir=internal/handler/middleware --name=Handler \
+	--output=internal/mocks --filename=mock_handler.go --log-level=info
