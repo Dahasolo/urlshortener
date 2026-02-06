@@ -26,3 +26,4 @@ vendor/
 Makefile.debug
 run.sh
 cmd/client
+data
