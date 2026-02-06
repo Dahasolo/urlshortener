@@ -28,7 +28,15 @@ func main() {
 
 	logger.InitFromEnvAndFlag(flagLogLevel)
 
-	repo := repository.NewInMemoryURLRepo()
+	repo := repository.NewInMemoryURLRepo(cfg.FileStoragePath)
+	if cfg.FileStoragePath != "" {
+		if err := repo.LoadFromFile(); err != nil {
+			logger.Log.Error("failed to load data from file", "error", err, "path", cfg.FileStoragePath)
+		} else {
+			logger.Log.Info("data loaded from file", "path", cfg.FileStoragePath)
+		}
+	}
+
 	svc := service.NewService(repo)
 	r := router.NewRouter(svc, cfg.BaseURL)
 

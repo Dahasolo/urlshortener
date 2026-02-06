@@ -10,33 +10,38 @@ import (
 
 // Config содержит параметры запуска сервиса.
 type Config struct {
-	ServerAddress string // адрес запуска HTTP-сервера (-a)
-	BaseURL       string // базовый URL для коротких ссылок (-b)
+	ServerAddress   string // адрес запуска HTTP-сервера (-a)
+	BaseURL         string // базовый URL для коротких ссылок (-b)
+	FileStoragePath string // путь к файлу для хранения данных в формате JSON (-f)
 }
 
 // Load загружает конфигурацию с учётом приоритета:
-// 1. Переменные окружения (SERVER_ADDRESS, BASE_URL)
-// 2. Флаги командной строки (-a, -b)
+// 1. Переменные окружения (SERVER_ADDRESS, BASE_URL, FILE_STORAGE_PATH)
+// 2. Флаги командной строки (-a, -b, -f)
 // 3. Значения по умолчанию
 func Load() (*Config, error) {
 	// Значения по умолчанию
 	serverAddrDefault := ":8080"
 	baseURLDefault := "http://localhost:8080/"
+	fileStoragePathDefault := "./storage.json"
 
 	// Флаги командной строки
-	var serverAddrFlag, baseURLFlag string
+	var serverAddrFlag, baseURLFlag, fileStoragePathFlag string
 	flag.StringVar(&serverAddrFlag, "a", serverAddrDefault, "адрес запуска HTTP-сервера")
 	flag.StringVar(&baseURLFlag, "b", baseURLDefault, "базовый адрес для коротких URL")
+	flag.StringVar(&fileStoragePathFlag, "f", fileStoragePathDefault, "путь к файлу для хранения данных")
 
 	flag.Parse()
 
 	// Переменные окружения
 	serverAddr := getEnvOrDefault("SERVER_ADDRESS", serverAddrFlag)
 	baseURL := getEnvOrDefault("BASE_URL", baseURLFlag)
+	fileStoragePath := getEnvOrDefault("FILE_STORAGE_PATH", fileStoragePathFlag)
 
 	cfg := &Config{
-		ServerAddress: serverAddr,
-		BaseURL:       baseURL,
+		ServerAddress:   serverAddr,
+		BaseURL:         baseURL,
+		FileStoragePath: fileStoragePath,
 	}
 
 	if err := cfg.Validate(); err != nil {
