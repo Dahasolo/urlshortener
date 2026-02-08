@@ -27,3 +27,4 @@ Makefile.debug
 run.sh
 cmd/client
 data
+storage.json

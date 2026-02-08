@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+// testLogger создаёт тестовый логгер для использования в тестах.
+func testLogger(t *testing.T) *slog.Logger {
+	t.Helper()
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // newChiRequest создаёт *http.Request с контекстом Chi, содержащим указанные URL-параметры.
 func newChiRequest(method, path string, body io.Reader, params map[string]string) *http.Request {
@@ -69,7 +76,8 @@ func TestShortenHandler(t *testing.T) {
 				repo.On("Save", mock.Anything, mock.Anything).Return(nil).Once()
 			}
 			svc := service.NewService(repo)
-			handler := ShortenHandler(svc, "http://localhost:8080/")
+			logger := testLogger(t)
+			handler := ShortenHandler(svc, "http://localhost:8080/", logger)
 
 			// Создание фейкового запроса
 			req := newChiRequest(http.MethodPost, "/", strings.NewReader(tt.body), nil)
@@ -131,7 +139,8 @@ func TestRedirectHandler(t *testing.T) {
 				tt.prepareRepo(repo)
 			}
 			svc := service.NewService(repo)
-			handler := RedirectHandler(svc)
+			logger := testLogger(t)
+			handler := RedirectHandler(svc, logger)
 
 			// Создание фейкового запроса
 			var params map[string]string
@@ -230,7 +239,8 @@ func TestShortenJSONHandler(t *testing.T) {
 				tt.prepareRepo(repo)
 			}
 			svc := service.NewService(repo)
-			handler := ShortenJSONHandler(svc, "http://localhost:8080/")
+			logger := testLogger(t)
+			handler := ShortenJSONHandler(svc, "http://localhost:8080/", logger)
 
 			// Создание фейкового запроса
 			req := newChiRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body), nil)

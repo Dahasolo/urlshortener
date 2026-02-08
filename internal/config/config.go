@@ -1,11 +1,12 @@
 package config
 
 import (
-	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
+	"strings"
 )
 
 // Config содержит параметры запуска сервиса.
@@ -13,64 +14,87 @@ type Config struct {
 	ServerAddress   string // адрес запуска HTTP-сервера (-a)
 	BaseURL         string // базовый URL для коротких ссылок (-b)
 	FileStoragePath string // путь к файлу для хранения данных в формате JSON (-f)
+	LogLevel        string // уровень логирования (-l)
+}
+
+// configField описывает источник параметра.
+type сonfigField struct {
+	envVar       string // переменная окружения
+	flagName     string // флаг командной строки
+	defaultValue string // значение по умолчанию
+	usage        string // описание
+	optional     bool   // true - разрешено пустое значение
+}
+
+// configFields определяет параметры конфигурации.
+var configFields = []сonfigField{
+	{"SERVER_ADDRESS", "a", ":8080", "адрес запуска HTTP-сервера", false},
+	{"BASE_URL", "b", "http://localhost:8080/", "базовый адрес для коротких URL", false},
+	{"FILE_STORAGE_PATH", "f", "./storage.json", "путь к файлу для хранения данных", true},
+	{"LOG_LEVEL", "l", "info", "уровень логирования", false},
 }
 
 // Load загружает конфигурацию с учётом приоритета:
-// 1. Переменные окружения (SERVER_ADDRESS, BASE_URL, FILE_STORAGE_PATH)
-// 2. Флаги командной строки (-a, -b, -f)
+// 1. Переменные окружения
+// 2. Флаги командной строки
 // 3. Значения по умолчанию
 func Load() (*Config, error) {
-	// Значения по умолчанию
-	serverAddrDefault := ":8080"
-	baseURLDefault := "http://localhost:8080/"
-	fileStoragePathDefault := "./storage.json"
-
-	// Флаги командной строки
-	var serverAddrFlag, baseURLFlag, fileStoragePathFlag string
-	flag.StringVar(&serverAddrFlag, "a", serverAddrDefault, "адрес запуска HTTP-сервера")
-	flag.StringVar(&baseURLFlag, "b", baseURLDefault, "базовый адрес для коротких URL")
-	flag.StringVar(&fileStoragePathFlag, "f", fileStoragePathDefault, "путь к файлу для хранения данных")
+	flagVars := make(map[string]*string)
+	for _, field := range configFields {
+		flagVars[field.flagName] = flag.String(field.flagName, field.defaultValue, field.usage)
+	}
 
 	flag.Parse()
 
-	// Переменные окружения
-	serverAddr := getEnvOrDefault("SERVER_ADDRESS", serverAddrFlag)
-	baseURL := getEnvOrDefault("BASE_URL", baseURLFlag)
-	fileStoragePath := getEnvOrDefault("FILE_STORAGE_PATH", fileStoragePathFlag)
-
-	cfg := &Config{
-		ServerAddress:   serverAddr,
-		BaseURL:         baseURL,
-		FileStoragePath: fileStoragePath,
+	cfg := &Config{}
+	for _, field := range configFields {
+		value, err := getEnvOrFlag(field.envVar, *flagVars[field.flagName], field.optional)
+		if err != nil {
+			return nil, err
+		}
+		switch field.envVar {
+		case "SERVER_ADDRESS":
+			cfg.ServerAddress = value
+		case "BASE_URL":
+			cfg.BaseURL = value
+		case "FILE_STORAGE_PATH":
+			cfg.FileStoragePath = value
+		case "LOG_LEVEL":
+			cfg.LogLevel = value
+		}
 	}
 
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
-
-	return cfg, nil
+	return cfg, cfg.Validate()
 }
 
-// getEnvOrDefault возвращает значение переменной окружения, если пустое - fallback.
-func getEnvOrDefault(envVar, fallback string) string {
-	if value := os.Getenv(envVar); value != "" {
-		return value
+// getEnvOrFlag возвращает значение переменной окружения, если она установлена.
+// Иначе - значение флага командной строки.
+func getEnvOrFlag(envVar, flagValue string, optional bool) (string, error) {
+	if value, ok := os.LookupEnv(envVar); ok {
+		if value == "" && !optional {
+			return "", fmt.Errorf("%s cannot be empty", envVar)
+		}
+		return value, nil
 	}
-	return fallback
+
+	if flagValue == "" && !optional {
+		return "", fmt.Errorf("%s flag cannot be empty", envVar)
+	}
+
+	return flagValue, nil
 }
 
 // Validate проверяет корректность полей конфигурации.
 func (c *Config) Validate() error {
-	if c.ServerAddress == "" {
-		return errors.New("server address is required")
-	}
-
-	if c.BaseURL == "" {
-		return errors.New("base URL is required")
-	}
-
+	// Валидация BaseURL
 	if _, err := url.Parse(c.BaseURL); err != nil {
 		return fmt.Errorf("invalid base URL %q: %w", c.BaseURL, err)
+	}
+
+	// Валидация уровня логирования
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(strings.ToUpper(c.LogLevel))); err != nil {
+		return fmt.Errorf("invalid log level %q: %w", c.LogLevel, err)
 	}
 
 	return nil
