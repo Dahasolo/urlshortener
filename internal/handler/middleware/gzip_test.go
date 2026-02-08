@@ -15,7 +15,8 @@ import (
 )
 
 // mockHandler создаёт мок с заданным contentType
-func mockHandler(body, contentType string) *mocks.Handler {
+func mockHandler(t *testing.T, body, contentType string) *mocks.Handler {
+	t.Helper()
 	mockHandler := new(mocks.Handler)
 	mockHandler.On("ServeHTTP", mock.Anything, mock.Anything).Return().Run(func(args mock.Arguments) {
 		w := args.Get(0).(http.ResponseWriter)
@@ -58,7 +59,7 @@ func TestGzipMiddleware(t *testing.T) {
 		{
 			name: "decompress_request",
 			setup: func() (*mocks.Handler, *http.Request) {
-				return mockHandler(respJSON, "application/json"), gzipRequest(t, "POST", "/api/shorten", reqJSON)
+				return mockHandler(t, respJSON, "application/json"), gzipRequest(t, "POST", "/api/shorten", reqJSON)
 			},
 			expectedGzip:          false,
 			expectedCode:          http.StatusOK,
@@ -70,7 +71,7 @@ func TestGzipMiddleware(t *testing.T) {
 			setup: func() (*mocks.Handler, *http.Request) {
 				r := httptest.NewRequest("POST", "/api/shorten", bytes.NewBufferString(reqJSON))
 				r.Header.Set("Accept-Encoding", "gzip")
-				return mockHandler(respJSON, "application/json"), r
+				return mockHandler(t, respJSON, "application/json"), r
 			},
 			expectedGzip:          true,
 			expectedCode:          http.StatusOK,
@@ -82,7 +83,7 @@ func TestGzipMiddleware(t *testing.T) {
 			setup: func() (*mocks.Handler, *http.Request) {
 				r := httptest.NewRequest("POST", "/", bytes.NewBufferString("https://example.com"))
 				r.Header.Set("Accept-Encoding", "gzip")
-				return mockHandler(respText, "text/plain"), r
+				return mockHandler(t, respText, "text/plain"), r
 			},
 			expectedGzip:          false,
 			expectedCode:          http.StatusOK,
@@ -94,7 +95,7 @@ func TestGzipMiddleware(t *testing.T) {
 			setup: func() (*mocks.Handler, *http.Request) {
 				r := gzipRequest(t, "POST", "/api/shorten", reqJSON)
 				r.Header.Set("Accept-Encoding", "gzip")
-				return mockHandler(respJSON, "application/json"), r
+				return mockHandler(t, respJSON, "application/json"), r
 			},
 			expectedGzip:          true,
 			expectedCode:          http.StatusOK,

@@ -2,18 +2,14 @@ package repository
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
-	"maps"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 )
 
-var ErrAlreadyExists = errors.New("ID already exists")
-
-// urlEntry представляет одну запись для сериализации в JSON
+// urlEntry представляет одну запись для сериализации в JSON.
 type urlEntry struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
@@ -23,87 +19,73 @@ type urlEntry struct {
 type InMemoryURLRepo struct {
 	urls     map[string]string
 	mu       sync.Mutex
+	file     *os.File
 	filePath string
 }
 
 // NewInMemoryURLRepo создаёт новый экземпляр InMemoryURLRepo.
-func NewInMemoryURLRepo(filePath string) *InMemoryURLRepo {
-	return &InMemoryURLRepo{
+func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
+	repo := &InMemoryURLRepo{
 		urls:     make(map[string]string),
 		filePath: filePath,
 	}
-}
 
-// Save сохраняет URL по заданному ID.
-func (r *InMemoryURLRepo) Save(id, url string) error {
-	r.mu.Lock()
-
-	// сохранение в память
-	if _, exists := r.urls[id]; exists {
-		r.mu.Unlock()
-		return fmt.Errorf("ID %s for URL %q already exists: %w", id, url, ErrAlreadyExists)
+	if filePath == "" {
+		return repo, nil
 	}
-	r.urls[id] = url
 
-	// копирование данных
-	urlsCopy := make(map[string]string, len(r.urls))
-	maps.Copy(urlsCopy, r.urls)
-	r.mu.Unlock()
-
-	// сохранение на диск
-	if r.filePath != "" {
-		if err := r.saveToFile(urlsCopy); err != nil {
-			log.Printf("warning: failed to save data to %q: %v", r.filePath, err)
+	// Создание директории, если она не существует
+	if dir := filepath.Dir(filePath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory %q: %w", dir, err)
 		}
 	}
-	return nil
-}
 
-// Get возвращает URL по ID или пустую строку с false, если ID не найден.
-func (r *InMemoryURLRepo) Get(id string) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	url, ok := r.urls[id]
-	return url, ok
-}
-
-// LoadFromFile загружает данные из файла при старте сервера
-func (r *InMemoryURLRepo) LoadFromFile() error {
-	if r.filePath == "" {
-		return nil
-	}
-
-	data, err := os.ReadFile(r.filePath)
+	// Открываем файл
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("info: file %q does not exist", r.filePath)
-			return nil
+		return nil, fmt.Errorf("failed to open file %q: %w", filePath, err)
+	}
+	repo.file = file
+
+	// Получаем размер файла
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to stat file %q: %w", filePath, err)
+	}
+
+	// Загрузка данных (если файл не пустой)
+	if info.Size() > 0 {
+		data := make([]byte, info.Size())
+		if _, err := io.ReadFull(file, data); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("failed to read file %q: %w", filePath, err)
 		}
-		return fmt.Errorf("failed to read file %q: %w", r.filePath, err)
+
+		// десериализация данных из JSON
+		var entries []urlEntry
+		if err := json.Unmarshal(data, &entries); err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("failed to unmarshal JSON from %q: %w", filePath, err)
+		}
+
+		// загрузка данных в память
+		repo.mu.Lock()
+		for _, entry := range entries {
+			repo.urls[entry.ShortURL] = entry.OriginalURL
+		}
+		repo.mu.Unlock()
 	}
 
-	// десериализация данных из JSON
-	var entries []urlEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return fmt.Errorf("failed to unmarshal JSON from %q: %w", r.filePath, err)
-	}
-
-	// загрузка данных в память
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, entry := range entries {
-		r.urls[entry.ShortURL] = entry.OriginalURL
-	}
-
-	return nil
+	return repo, nil
 }
 
-// saveToFile сохраняет все данные в файл
-func (r *InMemoryURLRepo) saveToFile(data map[string]string) error {
+// saveToFile сохраняет все данные в файл.
+func (r *InMemoryURLRepo) saveToFile() error {
 	// преобразование данных для сериализации
-	entries := make([]urlEntry, 0, len(data))
-	for shortURL, originalURL := range data {
+	entries := make([]urlEntry, 0, len(r.urls))
+	for shortURL, originalURL := range r.urls {
 		entries = append(entries, urlEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
@@ -116,18 +98,56 @@ func (r *InMemoryURLRepo) saveToFile(data map[string]string) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	// Создаём директорию, если она не существует
-	dir := filepath.Dir(r.filePath)
-	if dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %q: %w", dir, err)
-		}
+	// Запись в файл
+	if _, err := r.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek to beginning of file %q: %w", r.filePath, err)
+	}
+	if err := r.file.Truncate(0); err != nil {
+		return fmt.Errorf("failed to truncate file %q: %w", r.filePath, err)
+	}
+	if _, err := r.file.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to write data to file %q: %w", r.filePath, err)
+	}
+	if err := r.file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file %q: %w", r.filePath, err)
 	}
 
-	// запись данных в файл
-	if err := os.WriteFile(r.filePath, jsonData, 0644); err != nil {
-		return fmt.Errorf("failed to write file %q: %w", r.filePath, err)
+	return nil
+}
+
+// Save сохраняет URL по заданному ID.
+func (r *InMemoryURLRepo) Save(id, url string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// сохранение в память
+	if _, exists := r.urls[id]; exists {
+		return fmt.Errorf("ID %q for URL %q already exists", id, url)
+	}
+	r.urls[id] = url
+
+	// запись в файл
+	if r.file != nil {
+		return r.saveToFile()
 	}
 
+	return nil
+}
+
+// Get возвращает URL по ID или пустую строку с false, если ID не найден.
+func (r *InMemoryURLRepo) Get(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	url, ok := r.urls[id]
+	return url, ok
+}
+
+// Close - корректное закрытие файла при завершении программы.
+func (r *InMemoryURLRepo) Close() error {
+	if r.file != nil {
+		err := r.file.Close()
+		r.file = nil
+		return err
+	}
 	return nil
 }

@@ -3,7 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,10 +23,12 @@ type ShortenResponse struct {
 	Result string `json:"result"`
 }
 
-func ShortenHandler(svc *service.Service, baseURL string) http.HandlerFunc {
+// ShortenHandler обрабатывает запросы на сокращение URL из тела запроса (текст).
+func ShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			logger.Error("failed to read body", "error", err)
 			http.Error(w, "failed to read body", http.StatusBadRequest)
 			return
 		}
@@ -44,18 +46,22 @@ func ShortenHandler(svc *service.Service, baseURL string) http.HandlerFunc {
 
 		id, err := svc.Shorten(originalURL)
 		if err != nil {
-			log.Printf("Shorten failed: url=%q err=%v", originalURL, err)
+			logger.Error("failed to shorten URL", "url", originalURL, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		shortURL, _ := url.JoinPath(baseURL, id)
+
+		logger.Info("URL shortened successfully", "original", originalURL, "short", shortURL, "id", id)
+
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(shortURL))
 	}
 }
 
-func RedirectHandler(svc *service.Service) http.HandlerFunc {
+// RedirectHandler обрабатывает запросы на получение оригинального URL по короткому идентификатору.
+func RedirectHandler(svc *service.Service, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 
@@ -75,7 +81,8 @@ func RedirectHandler(svc *service.Service) http.HandlerFunc {
 	}
 }
 
-func ShortenJSONHandler(svc *service.Service, baseURL string) http.HandlerFunc {
+// ShortenJSONHandler обрабатывает запросы на сокращение URL из JSON-тела запроса.
+func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/json" {
@@ -96,12 +103,15 @@ func ShortenJSONHandler(svc *service.Service, baseURL string) http.HandlerFunc {
 
 		id, err := svc.Shorten(req.URL)
 		if err != nil {
-			log.Printf("Shorten failed: url=%q err=%v", req.URL, err)
+			logger.Error("failed to shorten URL from JSON request", "url", req.URL, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		shortURL, _ := url.JoinPath(baseURL, id)
+
+		logger.Info("URL shortened from JSON", "original", req.URL, "short", shortURL, "id", id)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 
