@@ -34,4 +34,5 @@ mock:
 # Генерация нового мока Handler для тестирования gzip
 mock_handler:
 	mockery --all=false --dir=internal/handler/middleware --name=Handler \
-	--output=internal/mocks --filename=mock_handler.go --log-level=info
+	--output=internal/mocks --filename=mock_handler.go \
+	--with-expecter --structname=HandlerMock --log-level=info

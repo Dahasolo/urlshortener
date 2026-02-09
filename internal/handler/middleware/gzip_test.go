@@ -15,15 +15,16 @@ import (
 )
 
 // mockHandler создаёт мок с заданным contentType
-func mockHandler(t *testing.T, body, contentType string) *mocks.Handler {
+func mockHandler(t *testing.T, body, contentType string) *mocks.HandlerMock {
 	t.Helper()
-	mockHandler := new(mocks.Handler)
-	mockHandler.On("ServeHTTP", mock.Anything, mock.Anything).Return().Run(func(args mock.Arguments) {
-		w := args.Get(0).(http.ResponseWriter)
-		w.Header().Set("Content-Type", contentType)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(body))
-	})
+	mockHandler := mocks.NewHandlerMock(t)
+	mockHandler.EXPECT().
+		ServeHTTP(mock.Anything, mock.Anything).
+		Run(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(body))
+		})
 	return mockHandler
 }
 
@@ -50,7 +51,7 @@ func TestGzipMiddleware(t *testing.T) {
 
 	tests := []struct {
 		name                  string
-		setup                 func() (*mocks.Handler, *http.Request)
+		setup                 func() (*mocks.HandlerMock, *http.Request)
 		expectedGzip          bool
 		expectedCode          int
 		handlerShouldBeCalled bool // должен ли вызываться Handler
@@ -58,7 +59,7 @@ func TestGzipMiddleware(t *testing.T) {
 	}{
 		{
 			name: "decompress_request",
-			setup: func() (*mocks.Handler, *http.Request) {
+			setup: func() (*mocks.HandlerMock, *http.Request) {
 				return mockHandler(t, respJSON, "application/json"), gzipRequest(t, "POST", "/api/shorten", reqJSON)
 			},
 			expectedGzip:          false,
@@ -68,7 +69,7 @@ func TestGzipMiddleware(t *testing.T) {
 		},
 		{
 			name: "compress_json",
-			setup: func() (*mocks.Handler, *http.Request) {
+			setup: func() (*mocks.HandlerMock, *http.Request) {
 				r := httptest.NewRequest("POST", "/api/shorten", bytes.NewBufferString(reqJSON))
 				r.Header.Set("Accept-Encoding", "gzip")
 				return mockHandler(t, respJSON, "application/json"), r
@@ -80,7 +81,7 @@ func TestGzipMiddleware(t *testing.T) {
 		},
 		{
 			name: "skip_text",
-			setup: func() (*mocks.Handler, *http.Request) {
+			setup: func() (*mocks.HandlerMock, *http.Request) {
 				r := httptest.NewRequest("POST", "/", bytes.NewBufferString("https://example.com"))
 				r.Header.Set("Accept-Encoding", "gzip")
 				return mockHandler(t, respText, "text/plain"), r
@@ -92,7 +93,7 @@ func TestGzipMiddleware(t *testing.T) {
 		},
 		{
 			name: "bidirectional_compression",
-			setup: func() (*mocks.Handler, *http.Request) {
+			setup: func() (*mocks.HandlerMock, *http.Request) {
 				r := gzipRequest(t, "POST", "/api/shorten", reqJSON)
 				r.Header.Set("Accept-Encoding", "gzip")
 				return mockHandler(t, respJSON, "application/json"), r
@@ -104,10 +105,10 @@ func TestGzipMiddleware(t *testing.T) {
 		},
 		{
 			name: "invalid_gzip",
-			setup: func() (*mocks.Handler, *http.Request) {
+			setup: func() (*mocks.HandlerMock, *http.Request) {
 				r := httptest.NewRequest("POST", "/api/shorten", bytes.NewBufferString(reqJSON))
 				r.Header.Set("Content-Encoding", "gzip") // несжатые данные с заголовком сжатия
-				return new(mocks.Handler), r
+				return new(mocks.HandlerMock), r
 			},
 			expectedGzip:          false,
 			expectedCode:          http.StatusBadRequest,
