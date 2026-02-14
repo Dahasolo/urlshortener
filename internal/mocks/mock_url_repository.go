@@ -9,6 +9,24 @@ type URLRepository struct {
 	mock.Mock
 }
 
+// Close provides a mock function with no fields
+func (_m *URLRepository) Close() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Close")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // Get provides a mock function with given fields: id
 func (_m *URLRepository) Get(id string) (string, bool) {
 	ret := _m.Called(id)
@@ -35,6 +53,24 @@ func (_m *URLRepository) Get(id string) (string, bool) {
 	}
 
 	return r0, r1
+}
+
+// Ping provides a mock function with no fields
+func (_m *URLRepository) Ping() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Ping")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }
 
 // Save provides a mock function with given fields: id, url
