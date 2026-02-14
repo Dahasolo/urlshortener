@@ -33,12 +33,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 	logger.Info("starting app initialization")
 
 	// Инициализация репозитория
-	repo, err := repository.NewInMemoryURLRepo(cfg.FileStoragePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create repository: %w", err)
-	}
-	if cfg.FileStoragePath != "" {
-		logger.Info("repository initialized with file storage", "path", cfg.FileStoragePath)
+	var repo service.URLRepository
+	if cfg.DatabaseDSN != "" {
+		repo, err = repository.NewPostgresURLRepo(cfg.DatabaseDSN, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PostgreSQL repository: %w", err)
+		}
+		logger.Info("repository initialized with PostgreSQL")
+	} else {
+		repo, err = repository.NewInMemoryURLRepo(cfg.FileStoragePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create repository: %w", err)
+		}
+		if cfg.FileStoragePath != "" {
+			logger.Info("repository initialized with file storage", "path", cfg.FileStoragePath)
+		}
 	}
 
 	// Инициализация сервиса
