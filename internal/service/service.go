@@ -11,6 +11,8 @@ const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 type URLRepository interface {
 	Save(id, url string) error
 	Get(id string) (string, bool)
+	Close() error
+	Ping() error
 }
 
 // Service реализует сервис сокращения URL.
@@ -54,4 +56,20 @@ func (s *Service) Shorten(url string) (string, error) {
 // Resolve возвращает оригинальный URL по короткому ID.
 func (s *Service) Resolve(id string) (string, bool) {
 	return s.repo.Get(id)
+}
+
+// Ping проверяет доступность хранилища через репозиторий.
+func (s *Service) Ping() error {
+    if s.repo == nil {
+        return fmt.Errorf("repository is nil")
+    }
+    return s.repo.Ping()
+}
+
+// Close закрывает соединение с хранилищем через репозиторий.
+func (s *Service) Close() error {
+    if s.repo == nil {
+        return fmt.Errorf("repository is nil")
+    }
+    return s.repo.Close()
 }

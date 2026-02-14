@@ -29,7 +29,7 @@ clean:
 
 # Генерация мока из .mockery.yaml
 mock:
-	mockery
+	mockery --config .mockery.yaml
 
 # Генерация нового мока Handler для тестирования gzip
 mock_handler:

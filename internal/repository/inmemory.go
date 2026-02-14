@@ -151,3 +151,8 @@ func (r *InMemoryURLRepo) Close() error {
 	}
 	return nil
 }
+
+// Ping проверяет доступность хранилища.
+func (r *InMemoryURLRepo) Ping() error {
+	return nil
+}
