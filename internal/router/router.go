@@ -22,6 +22,7 @@ func NewRouter(svc *service.Service, baseURL string, appLogger *slog.Logger) htt
 	r.Post("/", handler.ShortenHandler(svc, baseURL, appLogger))
 	r.Get("/{id}", handler.RedirectHandler(svc, appLogger))
 	r.Post("/api/shorten", handler.ShortenJSONHandler(svc, baseURL, appLogger))
+	r.Get("/ping", handler.PingHandler(svc))
 
 	return r
 }
