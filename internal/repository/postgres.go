@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Dahasolo/urlshortener/migrations"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -35,6 +36,12 @@ func NewPostgresURLRepo(dsn string, logger *slog.Logger) (*PostgresURLRepo, erro
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	// Применение миграций
+	if err := migrations.ApplyMigrations(dsn, logger); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to apply migrations: %w", err)
+	}
+
 	logger.Info("successfully connected to PostgreSQL")
 
 	return &PostgresURLRepo{
@@ -53,12 +60,32 @@ func (r *PostgresURLRepo) Ping() error {
 
 // Save сохраняет короткий URL в БД.
 func (r *PostgresURLRepo) Save(id, url string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	query := "INSERT INTO urls (id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING"
+	_, err := r.db.ExecContext(ctx, query, id, url)
+
+	if err != nil {
+		return fmt.Errorf("failed to save URL: %w", err)
+	}
+
 	return nil
 }
 
 // Get возвращает оригинальный URL по короткому идентификатору.
 func (r *PostgresURLRepo) Get(id string) (string, bool) {
-	return "", false
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var originalURL string
+	err := r.db.QueryRowContext(ctx, "SELECT original_url FROM urls WHERE id = $1", id).Scan(&originalURL)
+
+	if err != nil {
+		return "", false
+	}
+
+	return originalURL, true
 }
 
 // Close закрывает соединение с БД.
