@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/Dahasolo/urlshortener/internal/service"
 )
 
 // urlEntry представляет одну запись для сериализации в JSON.
@@ -125,6 +127,31 @@ func (r *InMemoryURLRepo) Save(id, url string) error {
 		return fmt.Errorf("ID %q for URL %q already exists", id, url)
 	}
 	r.urls[id] = url
+
+	// запись в файл
+	if r.file != nil {
+		return r.saveToFile()
+	}
+
+	return nil
+}
+
+// SaveMany сохраняет несколько коротких URL.
+func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// сохранение в память
+	for _, entry := range entries {
+		if _, exists := r.urls[entry.ID]; exists {
+			return fmt.Errorf("ID %q for URL %q already exists", entry.ID, entry.OriginalURL)
+		}
+		r.urls[entry.ID] = entry.OriginalURL
+	}
 
 	// запись в файл
 	if r.file != nil {
