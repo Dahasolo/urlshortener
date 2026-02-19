@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // testLogger создаёт тестовый логгер для использования в тестах.
@@ -259,6 +261,119 @@ func TestShortenJSONHandler(t *testing.T) {
 			if tt.expectJSON {
 				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 				assert.Regexp(t, `^{"result":"http://localhost:8080/[a-zA-Z0-9]+"}`, w.Body.String())
+			}
+
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestBatchShortenHandler(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		contentType   string
+		prepareRepo   func(r *mocks.URLRepository)
+		expectedCode  int
+		expectJSON    bool
+		expectResults int
+	}{
+		{
+			name:        "valid single url",
+			body:        `[{"correlation_id":"a","original_url":"https://example.com"}]`,
+			contentType: "application/json",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("SaveMany", mock.Anything).Return(nil).Once()
+			},
+			expectedCode:  http.StatusCreated,
+			expectJSON:    true,
+			expectResults: 1,
+		},
+		{
+			name: "valid multiple urls",
+			body: `[
+				{"correlation_id":"a","original_url":"https://example1.com"},
+				{"correlation_id":"b","original_url":"https://example2.com"}
+			]`,
+			contentType: "application/json",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("SaveMany", mock.MatchedBy(func(entries []service.BatchEntry) bool {
+					return len(entries) == 2
+				})).Return(nil).Once()
+			},
+			expectedCode:  http.StatusCreated,
+			expectJSON:    true,
+			expectResults: 2,
+		},
+		{
+			name:          "empty batch",
+			body:          `[]`,
+			contentType:   "application/json",
+			expectedCode:  http.StatusBadRequest,
+			expectResults: 0,
+		},
+		{
+			name:          "invalid content type",
+			body:          `[{"correlation_id":"a","original_url":"https://example.com"}]`,
+			contentType:   "text/plain",
+			expectedCode:  http.StatusBadRequest,
+			expectResults: 0,
+		},
+		{
+			name:          "invalid json",
+			body:          `[{"correlation_id":"a"`,
+			contentType:   "application/json",
+			expectedCode:  http.StatusBadRequest,
+			expectResults: 0,
+		},
+		{
+			name:          "invalid url",
+			body:          `[{"correlation_id":"a","original_url":"invalid-url"}]`,
+			contentType:   "application/json",
+			expectedCode:  http.StatusBadRequest,
+			expectResults: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+			if tt.prepareRepo != nil {
+				tt.prepareRepo(repo)
+			}
+			svc := service.NewService(repo)
+			logger := testLogger(t)
+			handler := BatchShortenHandler(svc, "http://localhost:8080/", logger)
+
+			// Создание фейкового запроса
+			req := newChiRequest(http.MethodPost, "/api/shorten/batch", strings.NewReader(tt.body), nil)
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// Если ожидаем валидный JSON - проверяем формат
+			if tt.expectJSON && tt.expectedCode == http.StatusCreated {
+				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+				var responses []struct {
+					CorrelationID string `json:"correlation_id"`
+					ShortURL      string `json:"short_url"`
+				}
+				err := json.NewDecoder(w.Body).Decode(&responses)
+				require.NoError(t, err)
+				assert.Len(t, responses, tt.expectResults)
+
+				for _, resp := range responses {
+					assert.Regexp(t, `^http://localhost:8080/[a-zA-Z0-9]+$`, resp.ShortURL)
+				}
 			}
 
 			repo.AssertExpectations(t)

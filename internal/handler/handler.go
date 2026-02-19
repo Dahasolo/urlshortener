@@ -23,6 +23,18 @@ type ShortenResponse struct {
 	Result string `json:"result"`
 }
 
+// batchShortenRequest описывает элемент запроса для множественного сокращения.
+type batchShortenRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+// batchShortenResponse описывает элемент ответа для множественного сокращения.
+type batchShortenResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
 // ShortenHandler обрабатывает запросы на сокращение URL из тела запроса (текст).
 func ShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -117,5 +129,61 @@ func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logge
 
 		resp := ShortenResponse{Result: shortURL}
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// BatchShortenHandler обрабатывает множественное сокращение URL.
+func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		contentType := r.Header.Get("Content-Type")
+		if contentType != "application/json" {
+			http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+			return
+		}
+
+		var requests []batchShortenRequest
+		if err := json.NewDecoder(r.Body).Decode(&requests); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if len(requests) == 0 {
+			http.Error(w, "empty batch", http.StatusBadRequest)
+			return
+		}
+		for _, req := range requests {
+			if !govalidator.IsURL(req.OriginalURL) {
+				http.Error(w, "invalid URL format", http.StatusBadRequest)
+				return
+			}
+		}
+
+		svcRequests := make([]service.BatchRequest, 0, len(requests))
+		for _, req := range requests {
+			svcRequests = append(svcRequests, service.BatchRequest{
+				CorrelationID: req.CorrelationID,
+				OriginalURL:   req.OriginalURL,
+			})
+		}
+
+		results, err := svc.BatchShorten(svcRequests)
+		if err != nil {
+			logger.Error("batch shorten failed", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		responses := make([]batchShortenResponse, 0, len(results))
+		for _, res := range results {
+			shortURL, _ := url.JoinPath(baseURL, res.ID)
+			responses = append(responses, batchShortenResponse{
+				CorrelationID: res.CorrelationID,
+				ShortURL:      shortURL,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(responses)
 	}
 }
