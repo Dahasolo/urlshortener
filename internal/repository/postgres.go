@@ -1,12 +1,14 @@
 package repository
 
 import (
+	"strings"
 	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/Dahasolo/urlshortener/internal/service"
 	"github.com/Dahasolo/urlshortener/migrations"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -65,6 +67,34 @@ func (r *PostgresURLRepo) Save(id, url string) error {
 
 	query := "INSERT INTO urls (id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING"
 	_, err := r.db.ExecContext(ctx, query, id, url)
+
+	if err != nil {
+		return fmt.Errorf("failed to save URL: %w", err)
+	}
+
+	return nil
+}
+
+// SaveMany сохраняет несколько коротких URL в БД.
+func (r *PostgresURLRepo) SaveMany(entries []service.BatchEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	args := make([]any, 0, len(entries)*2)
+	var query strings.Builder; query.WriteString("INSERT INTO urls (id, original_url) VALUES ")
+	for i, entry := range entries {
+		if i > 0 {
+			query .WriteString(", ")
+		}
+		fmt.Fprintf(&query, "($%d, $%d)", i*2+1, i*2+2)
+		args = append(args, entry.ID, entry.OriginalURL)
+	}
+	query .WriteString(" ON CONFLICT (original_url) DO NOTHING")
+	_, err := r.db.ExecContext(ctx, query.String(), args...)
 
 	if err != nil {
 		return fmt.Errorf("failed to save URL: %w", err)
