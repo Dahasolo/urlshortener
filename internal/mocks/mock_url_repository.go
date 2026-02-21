@@ -58,6 +58,34 @@ func (_m *URLRepository) Get(id string) (string, bool) {
 	return r0, r1
 }
 
+// GetExistingID provides a mock function with given fields: url
+func (_m *URLRepository) GetExistingID(url string) (string, bool) {
+	ret := _m.Called(url)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetExistingID")
+	}
+
+	var r0 string
+	var r1 bool
+	if rf, ok := ret.Get(0).(func(string) (string, bool)); ok {
+		return rf(url)
+	}
+	if rf, ok := ret.Get(0).(func(string) string); ok {
+		r0 = rf(url)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) bool); ok {
+		r1 = rf(url)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
 // Ping provides a mock function with no fields
 func (_m *URLRepository) Ping() error {
 	ret := _m.Called()

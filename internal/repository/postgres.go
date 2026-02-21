@@ -1,11 +1,11 @@
 package repository
 
 import (
-	"strings"
 	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Dahasolo/urlshortener/internal/service"
@@ -65,11 +65,25 @@ func (r *PostgresURLRepo) Save(id, url string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	query := "INSERT INTO urls (id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING"
-	_, err := r.db.ExecContext(ctx, query, id, url)
+	query := `
+		INSERT INTO urls (id, original_url) VALUES ($1, $2) 
+		ON CONFLICT (original_url) DO UPDATE SET id = urls.id 
+		RETURNING id, (xmax = 0) AS inserted
+	`
 
+	var existingID string
+	var inserted bool
+
+	err := r.db.QueryRowContext(ctx, query, id, url).Scan(&existingID, &inserted)
 	if err != nil {
 		return fmt.Errorf("failed to save URL: %w", err)
+	}
+
+	if !inserted {
+		return &service.ErrURLAlreadyExists{
+			ExistingID:  existingID,
+			OriginalURL: url,
+		}
 	}
 
 	return nil
@@ -85,17 +99,17 @@ func (r *PostgresURLRepo) SaveMany(entries []service.BatchEntry) error {
 	defer cancel()
 
 	args := make([]any, 0, len(entries)*2)
-	var query strings.Builder; query.WriteString("INSERT INTO urls (id, original_url) VALUES ")
+	var query strings.Builder
+	query.WriteString("INSERT INTO urls (id, original_url) VALUES ")
 	for i, entry := range entries {
 		if i > 0 {
-			query .WriteString(", ")
+			query.WriteString(", ")
 		}
 		fmt.Fprintf(&query, "($%d, $%d)", i*2+1, i*2+2)
 		args = append(args, entry.ID, entry.OriginalURL)
 	}
-	query .WriteString(" ON CONFLICT (original_url) DO NOTHING")
+	query.WriteString(` ON CONFLICT (original_url) DO UPDATE SET id = urls.id`)
 	_, err := r.db.ExecContext(ctx, query.String(), args...)
-
 	if err != nil {
 		return fmt.Errorf("failed to save URL: %w", err)
 	}
@@ -116,6 +130,20 @@ func (r *PostgresURLRepo) Get(id string) (string, bool) {
 	}
 
 	return originalURL, true
+}
+
+// GetExistingID возвращает существующий ID по оригинальному URL.
+func (r *PostgresURLRepo) GetExistingID(url string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var id string
+	err := r.db.QueryRowContext(ctx, "SELECT id FROM urls WHERE original_url = $1", url).Scan(&id)
+	if err != nil {
+		return "", false
+	}
+
+	return id, true
 }
 
 // Close закрывает соединение с БД.

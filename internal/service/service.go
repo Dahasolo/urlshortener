@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 )
 
@@ -12,6 +13,7 @@ type URLRepository interface {
 	Save(id, url string) error
 	SaveMany([]BatchEntry) error
 	Get(id string) (string, bool)
+	GetExistingID(url string) (string, bool)
 	Close() error
 	Ping() error
 }
@@ -69,10 +71,18 @@ func (s *Service) Shorten(url string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("generate ID failed: %w", err)
 		}
-		if err := s.repo.Save(id, url); err == nil {
+
+		err = s.repo.Save(id, url)
+		if err == nil {
 			return id, nil
 		}
+
+		var alreadyExists *ErrURLAlreadyExists
+		if errors.As(err, &alreadyExists) {
+			return "", err
+		}
 	}
+
 	return "", fmt.Errorf("failed to generate unique ID after %d attempts", maxRetries)
 }
 
@@ -119,6 +129,14 @@ func (s *Service) BatchShorten(requests []BatchRequest) ([]BatchResult, error) {
 
 	if err := s.repo.SaveMany(entries); err != nil {
 		return nil, fmt.Errorf("failed to save batch: %w", err)
+	}
+
+	for i := range results {
+		if origURL := requests[i].OriginalURL; origURL != "" {
+			if existingID, exists := s.repo.GetExistingID(origURL); exists {
+				results[i].ID = existingID
+			}
+		}
 	}
 
 	return results, nil

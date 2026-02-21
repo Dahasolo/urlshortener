@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -58,6 +59,18 @@ func ShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) h
 
 		id, err := svc.Shorten(originalURL)
 		if err != nil {
+			var alreadyExists *service.ErrURLAlreadyExists
+			if errors.As(err, &alreadyExists) {
+				logger.Info("URL already exists",
+					"original", alreadyExists.OriginalURL, "existing_id", alreadyExists.ExistingID)
+
+				shortURL, _ := url.JoinPath(baseURL, alreadyExists.ExistingID)
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusConflict)
+				w.Write([]byte(shortURL))
+				return
+			}
+
 			logger.Error("failed to shorten URL", "url", originalURL, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -115,6 +128,18 @@ func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logge
 
 		id, err := svc.Shorten(req.URL)
 		if err != nil {
+			var alreadyExists *service.ErrURLAlreadyExists
+			if errors.As(err, &alreadyExists) {
+				logger.Info("URL already exists",
+					"original", alreadyExists.OriginalURL, "existing_id", alreadyExists.ExistingID)
+
+				shortURL, _ := url.JoinPath(baseURL, alreadyExists.ExistingID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(ShortenResponse{Result: shortURL})
+				return
+			}
+
 			logger.Error("failed to shorten URL from JSON request", "url", req.URL, "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
