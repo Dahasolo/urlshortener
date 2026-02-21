@@ -20,6 +20,7 @@ type urlEntry struct {
 // InMemoryURLRepo — in-memory реализация репозитория для хранения коротких URL.
 type InMemoryURLRepo struct {
 	urls     map[string]string
+	urlToID  map[string]string
 	mu       sync.Mutex
 	file     *os.File
 	filePath string
@@ -29,6 +30,7 @@ type InMemoryURLRepo struct {
 func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
 	repo := &InMemoryURLRepo{
 		urls:     make(map[string]string),
+		urlToID:  make(map[string]string),
 		filePath: filePath,
 	}
 
@@ -76,6 +78,7 @@ func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
 		repo.mu.Lock()
 		for _, entry := range entries {
 			repo.urls[entry.ShortURL] = entry.OriginalURL
+			repo.urlToID[entry.OriginalURL] = entry.ShortURL
 		}
 		repo.mu.Unlock()
 	}
@@ -122,11 +125,22 @@ func (r *InMemoryURLRepo) Save(id, url string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// сохранение в память
+	// проверка дубликата URL
+	if existingID, exists := r.urlToID[url]; exists {
+		return &service.ErrURLAlreadyExists{
+			ExistingID:  existingID,
+			OriginalURL: url,
+		}
+	}
+
+	// проверка дубликата ID
 	if _, exists := r.urls[id]; exists {
 		return fmt.Errorf("ID %q for URL %q already exists", id, url)
 	}
+
+	// сохранение в память
 	r.urls[id] = url
+	r.urlToID[url] = id
 
 	// запись в файл
 	if r.file != nil {
@@ -145,12 +159,18 @@ func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// сохранение в память
 	for _, entry := range entries {
-		if _, exists := r.urls[entry.ID]; exists {
-			return fmt.Errorf("ID %q for URL %q already exists", entry.ID, entry.OriginalURL)
+		// проверка дубликата URL
+		if _, exists := r.urlToID[entry.OriginalURL]; exists {
+			continue
 		}
+		// проверка дубликата ID
+		if _, exists := r.urls[entry.ID]; exists {
+			continue
+		}
+		// сохранение в память
 		r.urls[entry.ID] = entry.OriginalURL
+		r.urlToID[entry.OriginalURL] = entry.ID
 	}
 
 	// запись в файл
@@ -167,6 +187,14 @@ func (r *InMemoryURLRepo) Get(id string) (string, bool) {
 	defer r.mu.Unlock()
 	url, ok := r.urls[id]
 	return url, ok
+}
+
+// GetExistingID возвращает существующий ID по оригинальному URL.
+func (r *InMemoryURLRepo) GetExistingID(url string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id, exists := r.urlToID[url]
+	return id, exists
 }
 
 // Close - корректное закрытие файла при завершении программы.

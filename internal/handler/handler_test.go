@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -284,6 +286,7 @@ func TestBatchShortenHandler(t *testing.T) {
 			contentType: "application/json",
 			prepareRepo: func(r *mocks.URLRepository) {
 				r.On("SaveMany", mock.Anything).Return(nil).Once()
+				r.On("GetExistingID", "https://example.com").Return("", false).Once()
 			},
 			expectedCode:  http.StatusCreated,
 			expectJSON:    true,
@@ -300,6 +303,8 @@ func TestBatchShortenHandler(t *testing.T) {
 				r.On("SaveMany", mock.MatchedBy(func(entries []service.BatchEntry) bool {
 					return len(entries) == 2
 				})).Return(nil).Once()
+				r.On("GetExistingID", "https://example1.com").Return("", false).Once()
+				r.On("GetExistingID", "https://example2.com").Return("", false).Once()
 			},
 			expectedCode:  http.StatusCreated,
 			expectJSON:    true,
@@ -375,6 +380,183 @@ func TestBatchShortenHandler(t *testing.T) {
 					assert.Regexp(t, `^http://localhost:8080/[a-zA-Z0-9]+$`, resp.ShortURL)
 				}
 			}
+
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestShortenHandler_DuplicateURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		existingID   string
+		originalURL  string
+		expectedCode int
+		expectedBody string
+	}{
+		{
+			name:         "duplicate url",
+			body:         "https://example.com",
+			existingID:   "abc123",
+			originalURL:  "https://example.com",
+			expectedCode: http.StatusConflict,
+			expectedBody: "http://localhost:8080/abc123",
+		},
+		{
+			name:         "duplicate url with whitespace",
+			body:         "  https://example.com  ",
+			existingID:   "xyz789",
+			originalURL:  "https://example.com",
+			expectedCode: http.StatusConflict,
+			expectedBody: "http://localhost:8080/xyz789",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+
+			// при ошибке дубликата сервис вернёт ErrURLAlreadyExists
+			repo.On("Save", mock.Anything, tt.originalURL).
+				Return(&service.ErrURLAlreadyExists{
+					ExistingID:  tt.existingID,
+					OriginalURL: tt.originalURL,
+				}).Once()
+
+			svc := service.NewService(repo)
+			logger := testLogger(t)
+			handler := ShortenHandler(svc, "http://localhost:8080/", logger)
+
+			// Создание фейкового запроса
+			req := newChiRequest(http.MethodPost, "/", strings.NewReader(tt.body), nil)
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// Проверка формата
+			assert.Equal(t, "text/plain", w.Header().Get("Content-Type"))
+			assert.Equal(t, tt.expectedBody, w.Body.String())
+
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestShortenJSONHandler_DuplicateURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		existingID   string
+		originalURL  string
+		expectedCode int
+	}{
+		{
+			name:         "duplicate url json",
+			body:         `{"url":"https://example.com"}`,
+			existingID:   "json123",
+			originalURL:  "https://example.com",
+			expectedCode: http.StatusConflict,
+		},
+		{
+			name:         "duplicate url json with path",
+			body:         `{"url":"https://example.com/path/to/page"}`,
+			existingID:   "path456",
+			originalURL:  "https://example.com/path/to/page",
+			expectedCode: http.StatusConflict,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+
+			// при ошибке дубликата сервис вернёт ErrURLAlreadyExists
+			repo.On("Save", mock.Anything, tt.originalURL).
+				Return(&service.ErrURLAlreadyExists{
+					ExistingID:  tt.existingID,
+					OriginalURL: tt.originalURL,
+				}).Once()
+
+			svc := service.NewService(repo)
+			logger := testLogger(t)
+			handler := ShortenJSONHandler(svc, "http://localhost:8080/", logger)
+
+			// Создание фейкового запроса
+			req := newChiRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body), nil)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса ответа
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// Проверка формата
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+			var resp ShortenResponse
+			err := json.NewDecoder(w.Body).Decode(&resp)
+			require.NoError(t, err)
+
+			expectedURL := fmt.Sprintf("http://localhost:8080/%s", tt.existingID)
+			assert.Equal(t, expectedURL, resp.Result)
+
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestShortenHandler_ServiceError(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		mockError    error
+		expectedCode int
+	}{
+		{
+			name:         "database error",
+			body:         "https://example.com",
+			mockError:    fmt.Errorf("database connection failed"),
+			expectedCode: http.StatusInternalServerError,
+		},
+		{
+			name:         "generic error",
+			body:         "https://test.com",
+			mockError:    errors.New("unexpected error"),
+			expectedCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+
+			// непредвиденная ошибка
+			repo.On("Save", mock.Anything, mock.Anything).
+				Return(tt.mockError).Times(10)
+
+			svc := service.NewService(repo)
+			logger := testLogger(t)
+			handler := ShortenHandler(svc, "http://localhost:8080/", logger)
+
+			// Создание фейкового запроса
+			req := newChiRequest(http.MethodPost, "/", strings.NewReader(tt.body), nil)
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса ответа
+			assert.Equal(t, tt.expectedCode, w.Code)
 
 			repo.AssertExpectations(t)
 		})
