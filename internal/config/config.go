@@ -16,6 +16,7 @@ type Config struct {
 	FileStoragePath string // путь к файлу для хранения данных в формате JSON (-f)
 	LogLevel        string // уровень логирования (-l)
 	DatabaseDSN     string // строка подключения к БД (-d)
+	SecretKey       string // секретный ключ для HMAC-подписи (-s)
 }
 
 // configField описывает источник параметра.
@@ -34,6 +35,7 @@ var configFields = []сonfigField{
 	{"FILE_STORAGE_PATH", "f", "./storage.json", "путь к файлу для хранения данных", true},
 	{"LOG_LEVEL", "l", "info", "уровень логирования", false},
 	{"DATABASE_DSN", "d", "", "строка подключения к базе данных", true},
+	{"SECRET_KEY", "s", "", "секретный ключ для HMAC-подписи", false},
 }
 
 // Load загружает конфигурацию с учётом приоритета:
@@ -65,6 +67,8 @@ func Load() (*Config, error) {
 			cfg.LogLevel = value
 		case "DATABASE_DSN":
 			cfg.DatabaseDSN = value
+		case "SECRET_KEY":
+			cfg.SecretKey = value
 		}
 	}
 

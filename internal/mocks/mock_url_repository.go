@@ -58,9 +58,9 @@ func (_m *URLRepository) Get(id string) (string, bool) {
 	return r0, r1
 }
 
-// GetExistingID provides a mock function with given fields: url
-func (_m *URLRepository) GetExistingID(url string) (string, bool) {
-	ret := _m.Called(url)
+// GetExistingID provides a mock function with given fields: url, userID
+func (_m *URLRepository) GetExistingID(url string, userID string) (string, bool) {
+	ret := _m.Called(url, userID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetExistingID")
@@ -68,19 +68,49 @@ func (_m *URLRepository) GetExistingID(url string) (string, bool) {
 
 	var r0 string
 	var r1 bool
-	if rf, ok := ret.Get(0).(func(string) (string, bool)); ok {
-		return rf(url)
+	if rf, ok := ret.Get(0).(func(string, string) (string, bool)); ok {
+		return rf(url, userID)
 	}
-	if rf, ok := ret.Get(0).(func(string) string); ok {
-		r0 = rf(url)
+	if rf, ok := ret.Get(0).(func(string, string) string); ok {
+		r0 = rf(url, userID)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(string) bool); ok {
-		r1 = rf(url)
+	if rf, ok := ret.Get(1).(func(string, string) bool); ok {
+		r1 = rf(url, userID)
 	} else {
 		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
+// GetUserURLs provides a mock function with given fields: userID
+func (_m *URLRepository) GetUserURLs(userID string) ([]service.URLRecord, error) {
+	ret := _m.Called(userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetUserURLs")
+	}
+
+	var r0 []service.URLRecord
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) ([]service.URLRecord, error)); ok {
+		return rf(userID)
+	}
+	if rf, ok := ret.Get(0).(func(string) []service.URLRecord); ok {
+		r0 = rf(userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]service.URLRecord)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(userID)
+	} else {
+		r1 = ret.Error(1)
 	}
 
 	return r0, r1
@@ -104,17 +134,17 @@ func (_m *URLRepository) Ping() error {
 	return r0
 }
 
-// Save provides a mock function with given fields: id, url
-func (_m *URLRepository) Save(id string, url string) error {
-	ret := _m.Called(id, url)
+// Save provides a mock function with given fields: id, url, userID
+func (_m *URLRepository) Save(id string, url string, userID string) error {
+	ret := _m.Called(id, url, userID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Save")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string) error); ok {
-		r0 = rf(id, url)
+	if rf, ok := ret.Get(0).(func(string, string, string) error); ok {
+		r0 = rf(id, url, userID)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -122,17 +152,17 @@ func (_m *URLRepository) Save(id string, url string) error {
 	return r0
 }
 
-// SaveMany provides a mock function with given fields: _a0
-func (_m *URLRepository) SaveMany(_a0 []service.BatchEntry) error {
-	ret := _m.Called(_a0)
+// SaveMany provides a mock function with given fields: entries, userID
+func (_m *URLRepository) SaveMany(entries []service.BatchEntry, userID string) error {
+	ret := _m.Called(entries, userID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SaveMany")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func([]service.BatchEntry) error); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func([]service.BatchEntry, string) error); ok {
+		r0 = rf(entries, userID)
 	} else {
 		r0 = ret.Error(0)
 	}

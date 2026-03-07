@@ -54,7 +54,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	svc := service.NewService(repo)
 
 	// Инициализация роутера
-	r := router.NewRouter(svc, cfg.BaseURL, logger)
+	r := router.NewRouter(svc, cfg.BaseURL, cfg.SecretKey, logger)
 
 	app := &App{
 		cfg:    cfg,
