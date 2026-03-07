@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Dahasolo/urlshortener/internal/auth"
 	"github.com/Dahasolo/urlshortener/internal/service"
 	"github.com/asaskevich/govalidator"
 	"github.com/go-chi/chi/v5"
@@ -36,8 +37,72 @@ type batchShortenResponse struct {
 	ShortURL      string `json:"short_url"`
 }
 
+// UserURLResponse описывает элемент ответа для списка URL пользователя.
+type UserURLResponse struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
+}
+
+// getUserIDFromRequest извлекает или создаёт userID из куки.
+func getUserIDFromRequest(r *http.Request, w http.ResponseWriter, secretKey string, logger *slog.Logger) (string, bool, error) {
+
+	userID, err := auth.GetUserIDFromRequest(r, secretKey)
+	if err != nil {
+		userID, err = auth.GenerateUserID()
+		if err != nil {
+			logger.Error("failed to generate user ID", "error", err)
+			return "", false, err
+		}
+
+		if err := auth.SetAuthCookie(w, userID, secretKey); err != nil {
+			logger.Error("failed to set auth cookie", "error", err)
+		}
+
+		return userID, true, nil
+	}
+
+	return userID, false, nil
+}
+
+// buildShortURL строит полный короткий URL.
+func buildShortURL(baseURL, id string) string {
+	shortURL, _ := url.JoinPath(baseURL, id)
+	return shortURL
+}
+
+// handleShortenError обрабатывает ошибки сокращения URL.
+func handleShortenError(w http.ResponseWriter, logger *slog.Logger,
+	err error, originalURL, baseURL string, isJSON bool) {
+
+	var alreadyExists *service.ErrURLAlreadyExists
+	if errors.As(err, &alreadyExists) {
+		logger.Info("URL already exists", "original", alreadyExists.OriginalURL, "existing_id", alreadyExists.ExistingID)
+
+		shortURL := buildShortURL(baseURL, alreadyExists.ExistingID)
+
+		if isJSON {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(ShortenResponse{Result: shortURL})
+		} else {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(shortURL))
+		}
+		return
+	}
+
+	logger.Error("failed to shorten URL", "url", originalURL, "error", err)
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+}
+
+// validateURL проверяет корректность URL.
+func validateURL(urlStr string) bool {
+	return govalidator.IsURL(urlStr)
+}
+
 // ShortenHandler обрабатывает запросы на сокращение URL из тела запроса (текст).
-func ShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
+func ShortenHandler(svc *service.Service, baseURL, secretKey string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -57,27 +122,20 @@ func ShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) h
 			return
 		}
 
-		id, err := svc.Shorten(originalURL)
+		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
 		if err != nil {
-			var alreadyExists *service.ErrURLAlreadyExists
-			if errors.As(err, &alreadyExists) {
-				logger.Info("URL already exists",
-					"original", alreadyExists.OriginalURL, "existing_id", alreadyExists.ExistingID)
-
-				shortURL, _ := url.JoinPath(baseURL, alreadyExists.ExistingID)
-				w.Header().Set("Content-Type", "text/plain")
-				w.WriteHeader(http.StatusConflict)
-				w.Write([]byte(shortURL))
-				return
-			}
-
-			logger.Error("failed to shorten URL", "url", originalURL, "error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 
-		shortURL, _ := url.JoinPath(baseURL, id)
+		id, err := svc.Shorten(originalURL, userID)
+		if err != nil {
+			logger.Error("shorten failed", "url", originalURL, "user_id", userID, "error", err)
+			handleShortenError(w, logger, err, originalURL, baseURL, false)
+			return
+		}
 
+		shortURL := buildShortURL(baseURL, id)
 		logger.Info("URL shortened successfully", "original", originalURL, "short", shortURL, "id", id)
 
 		w.WriteHeader(http.StatusCreated)
@@ -107,7 +165,7 @@ func RedirectHandler(svc *service.Service, logger *slog.Logger) http.HandlerFunc
 }
 
 // ShortenJSONHandler обрабатывает запросы на сокращение URL из JSON-тела запроса.
-func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
+func ShortenJSONHandler(svc *service.Service, baseURL, secretKey string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/json" {
@@ -121,32 +179,25 @@ func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logge
 			return
 		}
 
-		if !govalidator.IsURL(req.URL) {
+		if !validateURL(req.URL) {
 			http.Error(w, "invalid URL format", http.StatusBadRequest)
 			return
 		}
 
-		id, err := svc.Shorten(req.URL)
+		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
 		if err != nil {
-			var alreadyExists *service.ErrURLAlreadyExists
-			if errors.As(err, &alreadyExists) {
-				logger.Info("URL already exists",
-					"original", alreadyExists.OriginalURL, "existing_id", alreadyExists.ExistingID)
-
-				shortURL, _ := url.JoinPath(baseURL, alreadyExists.ExistingID)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(ShortenResponse{Result: shortURL})
-				return
-			}
-
-			logger.Error("failed to shorten URL from JSON request", "url", req.URL, "error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 
-		shortURL, _ := url.JoinPath(baseURL, id)
+		id, err := svc.Shorten(req.URL, userID)
+		if err != nil {
+			logger.Error("shorten failed", "url", req.URL, "user_id", userID, "error", err)
+			handleShortenError(w, logger, err, req.URL, baseURL, true)
+			return
+		}
 
+		shortURL := buildShortURL(baseURL, id)
 		logger.Info("URL shortened from JSON", "original", req.URL, "short", shortURL, "id", id)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -158,7 +209,7 @@ func ShortenJSONHandler(svc *service.Service, baseURL string, logger *slog.Logge
 }
 
 // BatchShortenHandler обрабатывает множественное сокращение URL.
-func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logger) http.HandlerFunc {
+func BatchShortenHandler(svc *service.Service, baseURL, secretKey string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/json" {
@@ -177,10 +228,16 @@ func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logg
 			return
 		}
 		for _, req := range requests {
-			if !govalidator.IsURL(req.OriginalURL) {
+			if !validateURL(req.OriginalURL) {
 				http.Error(w, "invalid URL format", http.StatusBadRequest)
 				return
 			}
+		}
+
+		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
 
 		svcRequests := make([]service.BatchRequest, 0, len(requests))
@@ -191,7 +248,7 @@ func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logg
 			})
 		}
 
-		results, err := svc.BatchShorten(svcRequests)
+		results, err := svc.BatchShorten(svcRequests, userID)
 		if err != nil {
 			logger.Error("batch shorten failed", "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -200,7 +257,7 @@ func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logg
 
 		responses := make([]batchShortenResponse, 0, len(results))
 		for _, res := range results {
-			shortURL, _ := url.JoinPath(baseURL, res.ID)
+			shortURL := buildShortURL(baseURL, res.ID)
 			responses = append(responses, batchShortenResponse{
 				CorrelationID: res.CorrelationID,
 				ShortURL:      shortURL,
@@ -211,4 +268,70 @@ func BatchShortenHandler(svc *service.Service, baseURL string, logger *slog.Logg
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(responses)
 	}
+}
+
+// UserURLsHandler возвращает все URL пользователя.
+func UserURLsHandler(svc *service.Service, baseURL, secretKey string, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(auth.CookieName)
+
+		// Если куки нет - создаём нового пользователя
+		if errors.Is(err, http.ErrNoCookie) {
+			userID, genErr := auth.GenerateUserID()
+			if genErr != nil {
+				logger.Error("failed to generate user ID", "error", genErr)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			if setErr := auth.SetAuthCookie(w, userID, secretKey); setErr != nil {
+				logger.Error("failed to set auth cookie", "error", setErr)
+			}
+			serveUserURLs(w, svc, baseURL, userID, logger)
+			return
+		}
+
+		// Ошибка чтения куки - 401
+		if err != nil {
+			logger.Warn("failed to read cookie", "error", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		// Если кука есть - проверяем подпись
+		userID, verifyErr := auth.VerifyToken(cookie.Value, secretKey)
+		if verifyErr != nil {
+			logger.Warn("invalid auth token", "error", verifyErr)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		serveUserURLs(w, svc, baseURL, userID, logger)
+	}
+}
+
+// serveUserURLs записывает список сокращённых URL пользователя в HTTP-ответ.
+func serveUserURLs(w http.ResponseWriter, svc *service.Service,
+	baseURL, userID string, logger *slog.Logger) {
+
+	urls, err := svc.GetUserURLs(userID)
+	if err != nil {
+		logger.Error("failed to get user URLs", "user_id", userID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	responses := make([]UserURLResponse, 0, len(urls))
+	for _, rec := range urls {
+		responses = append(responses, UserURLResponse{
+			ShortURL:    buildShortURL(baseURL, rec.ShortURL),
+			OriginalURL: rec.OriginalURL,
+		})
+	}
+	json.NewEncoder(w).Encode(responses)
 }

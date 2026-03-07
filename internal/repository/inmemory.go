@@ -121,12 +121,13 @@ func (r *InMemoryURLRepo) saveToFile() error {
 }
 
 // Save сохраняет URL по заданному ID.
-func (r *InMemoryURLRepo) Save(id, url string) error {
+func (r *InMemoryURLRepo) Save(id, url, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// проверка дубликата URL
-	if existingID, exists := r.urlToID[url]; exists {
+	key := url + "|" + userID
+	if existingID, exists := r.urlToID[key]; exists {
 		return &service.ErrURLAlreadyExists{
 			ExistingID:  existingID,
 			OriginalURL: url,
@@ -140,7 +141,7 @@ func (r *InMemoryURLRepo) Save(id, url string) error {
 
 	// сохранение в память
 	r.urls[id] = url
-	r.urlToID[url] = id
+	r.urlToID[key] = id
 
 	// запись в файл
 	if r.file != nil {
@@ -151,7 +152,7 @@ func (r *InMemoryURLRepo) Save(id, url string) error {
 }
 
 // SaveMany сохраняет несколько коротких URL.
-func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry) error {
+func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry, userID string) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -161,7 +162,8 @@ func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry) error {
 
 	for _, entry := range entries {
 		// проверка дубликата URL
-		if _, exists := r.urlToID[entry.OriginalURL]; exists {
+		key := entry.OriginalURL + "|" + userID
+		if _, exists := r.urlToID[key]; exists {
 			continue
 		}
 		// проверка дубликата ID
@@ -170,7 +172,7 @@ func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry) error {
 		}
 		// сохранение в память
 		r.urls[entry.ID] = entry.OriginalURL
-		r.urlToID[entry.OriginalURL] = entry.ID
+		r.urlToID[key] = entry.ID
 	}
 
 	// запись в файл
@@ -190,11 +192,31 @@ func (r *InMemoryURLRepo) Get(id string) (string, bool) {
 }
 
 // GetExistingID возвращает существующий ID по оригинальному URL.
-func (r *InMemoryURLRepo) GetExistingID(url string) (string, bool) {
+func (r *InMemoryURLRepo) GetExistingID(url string, userID string) (string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id, exists := r.urlToID[url]
+
+	key := url + "|" + userID
+	id, exists := r.urlToID[key]
 	return id, exists
+}
+
+// GetUserURLs возвращает все URL пользователя.
+func (r *InMemoryURLRepo) GetUserURLs(userID string) ([]service.URLRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var records []service.URLRecord
+	for shortID, originalURL := range r.urls {
+		key := originalURL + "|" + userID
+		if storedID, exists := r.urlToID[key]; exists && storedID == shortID {
+			records = append(records, service.URLRecord{
+				ShortURL:    shortID,
+				OriginalURL: originalURL,
+			})
+		}
+	}
+	return records, nil
 }
 
 // Close - корректное закрытие файла при завершении программы.

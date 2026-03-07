@@ -20,10 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     container: golang:1.24
     needs: branchtest
-
+  
     env:
       DATABASE_CONN_STRING: "postgres://postgres:postgres@postgres:5432/praktikum?sslmode=disable"
-
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      
     services:
       postgres:
         image: postgres

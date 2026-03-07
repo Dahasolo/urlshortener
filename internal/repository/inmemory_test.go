@@ -16,9 +16,9 @@ func TestInMemoryURLRepo_SaveAndLoadFromFile(t *testing.T) {
 	t.Cleanup(func() { _ = repo1.Close() })
 
 	// сохранение данных
-	err = repo1.Save("4rSPg8ap", "https://yandex.ru")
+	err = repo1.Save("4rSPg8ap", "https://yandex.ru", "test-user-id")
 	require.NoError(t, err)
-	err = repo1.Save("dG56Hqxm", "https://practicum.yandex.ru")
+	err = repo1.Save("dG56Hqxm", "https://practicum.yandex.ru", "test-user-id")
 	require.NoError(t, err)
 
 	// принудительное закрытие первого репозитория
