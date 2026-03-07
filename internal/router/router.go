@@ -13,17 +13,18 @@ import (
 )
 
 // NewRouter создаёт и настраивает роутер приложения.
-func NewRouter(svc *service.Service, baseURL string, appLogger *slog.Logger) http.Handler {
+func NewRouter(svc *service.Service, baseURL, secretKey string, appLogger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(logger.HTTPLogger(appLogger))
 	r.Use(middleware.GzipMiddleware)
 
-	r.Post("/", handler.ShortenHandler(svc, baseURL, appLogger))
+	r.Post("/", handler.ShortenHandler(svc, baseURL, secretKey, appLogger))
 	r.Get("/{id}", handler.RedirectHandler(svc, appLogger))
-	r.Post("/api/shorten", handler.ShortenJSONHandler(svc, baseURL, appLogger))
+	r.Post("/api/shorten", handler.ShortenJSONHandler(svc, baseURL, secretKey, appLogger))
 	r.Get("/ping", handler.PingHandler(svc))
-	r.Post("/api/shorten/batch", handler.BatchShortenHandler(svc, baseURL, appLogger))
+	r.Post("/api/shorten/batch", handler.BatchShortenHandler(svc, baseURL, secretKey, appLogger))
+	r.Get("/api/user/urls", handler.UserURLsHandler(svc, baseURL, secretKey, appLogger))
 
 	return r
 }

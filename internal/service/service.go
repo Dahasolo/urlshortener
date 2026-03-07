@@ -10,12 +10,19 @@ const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 // URLRepository определяет операции для работы с хранилищем коротких URL.
 type URLRepository interface {
-	Save(id, url string) error
-	SaveMany([]BatchEntry) error
+	Save(id, url string, userID string) error
+	SaveMany(entries []BatchEntry, userID string) error
 	Get(id string) (string, bool)
-	GetExistingID(url string) (string, bool)
+	GetExistingID(url string, userID string) (string, bool)
+	GetUserURLs(userID string) ([]URLRecord, error)
 	Close() error
 	Ping() error
+}
+
+// URLRecord - структура для ответа хендлера /api/user/urls.
+type URLRecord struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
 }
 
 // Service реализует сервис сокращения URL.
@@ -60,7 +67,7 @@ func (s *Service) generateID() (string, error) {
 }
 
 // Shorten сокращает URL и сохраняет в репозиторий.
-func (s *Service) Shorten(url string) (string, error) {
+func (s *Service) Shorten(url string, userID string) (string, error) {
 	if url == "" {
 		return "", fmt.Errorf("empty URL not allowed")
 	}
@@ -72,7 +79,7 @@ func (s *Service) Shorten(url string) (string, error) {
 			return "", fmt.Errorf("generate ID failed: %w", err)
 		}
 
-		err = s.repo.Save(id, url)
+		err = s.repo.Save(id, url, userID)
 		if err == nil {
 			return id, nil
 		}
@@ -87,7 +94,7 @@ func (s *Service) Shorten(url string) (string, error) {
 }
 
 // BatchShorten сокращает несколько URL за один вызов.
-func (s *Service) BatchShorten(requests []BatchRequest) ([]BatchResult, error) {
+func (s *Service) BatchShorten(requests []BatchRequest, userID string) ([]BatchResult, error) {
 	if len(requests) == 0 {
 		return nil, fmt.Errorf("empty batch not allowed")
 	}
@@ -127,19 +134,24 @@ func (s *Service) BatchShorten(requests []BatchRequest) ([]BatchResult, error) {
 		return nil, fmt.Errorf("no URLs were shortened")
 	}
 
-	if err := s.repo.SaveMany(entries); err != nil {
+	if err := s.repo.SaveMany(entries, userID); err != nil {
 		return nil, fmt.Errorf("failed to save batch: %w", err)
 	}
 
 	for i := range results {
 		if origURL := requests[i].OriginalURL; origURL != "" {
-			if existingID, exists := s.repo.GetExistingID(origURL); exists {
+			if existingID, exists := s.repo.GetExistingID(origURL, userID); exists {
 				results[i].ID = existingID
 			}
 		}
 	}
 
 	return results, nil
+}
+
+// GetUserURLs возвращает все URL пользователя.
+func (s *Service) GetUserURLs(userID string) ([]URLRecord, error) {
+	return s.repo.GetUserURLs(userID)
 }
 
 // Resolve возвращает оригинальный URL по короткому ID.

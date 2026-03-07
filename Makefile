@@ -39,6 +39,10 @@ mock_handler:
 	--output=internal/mocks --filename=mock_handler.go \
 	--with-expecter --structname=HandlerMock --log-level=info
 
+# Создание миграции
+migrate.create:
+	migrate create -ext sql -dir ./migrations $(name)
+
 # Применение всех миграций
 migrate.up:
 	migrate -database "$(DATABASE_DSN)" -path ./migrations up
