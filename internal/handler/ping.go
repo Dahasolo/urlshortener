@@ -9,7 +9,7 @@ import (
 // PingHandler проверяет соединение с базой данных.
 func PingHandler(svc *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := svc.Ping(); err != nil {
+		if err := svc.Ping(r.Context()); err != nil {
 			http.Error(w, "storage connection failed", http.StatusInternalServerError)
 			return
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/Dahasolo/urlshortener/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 func TestPingHandler(t *testing.T) {
@@ -20,14 +21,14 @@ func TestPingHandler(t *testing.T) {
 		{
 			name: "successful_ping",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Ping").Return(nil).Once()
+				r.On("Ping", mock.Anything).Return(nil).Once()
 			},
 			expectedCode: http.StatusOK,
 		},
 		{
 			name: "failed_ping",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Ping").Return(assert.AnError).Once()
+				r.On("Ping", mock.Anything).Return(assert.AnError).Once()
 			},
 			expectedCode: http.StatusInternalServerError,
 		},
@@ -40,7 +41,8 @@ func TestPingHandler(t *testing.T) {
 			if tt.prepareRepo != nil {
 				tt.prepareRepo(repo)
 			}
-			svc := service.NewService(repo)
+			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := PingHandler(svc)
 
 			// Создание фейкового запроса

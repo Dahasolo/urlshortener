@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,11 +16,13 @@ import (
 type urlEntry struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
+	UserID      string `json:"user_id"`
+	IsDeleted   bool   `json:"is_deleted"`
 }
 
 // InMemoryURLRepo — in-memory реализация репозитория для хранения коротких URL.
 type InMemoryURLRepo struct {
-	urls     map[string]string
+	urls     map[string]urlEntry
 	urlToID  map[string]string
 	mu       sync.Mutex
 	file     *os.File
@@ -29,7 +32,7 @@ type InMemoryURLRepo struct {
 // NewInMemoryURLRepo создаёт новый экземпляр InMemoryURLRepo.
 func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
 	repo := &InMemoryURLRepo{
-		urls:     make(map[string]string),
+		urls:     make(map[string]urlEntry),
 		urlToID:  make(map[string]string),
 		filePath: filePath,
 	}
@@ -77,8 +80,9 @@ func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
 		// загрузка данных в память
 		repo.mu.Lock()
 		for _, entry := range entries {
-			repo.urls[entry.ShortURL] = entry.OriginalURL
-			repo.urlToID[entry.OriginalURL] = entry.ShortURL
+			repo.urls[entry.ShortURL] = entry
+			key := entry.OriginalURL + "|" + entry.UserID
+			repo.urlToID[key] = entry.ShortURL
 		}
 		repo.mu.Unlock()
 	}
@@ -90,11 +94,8 @@ func NewInMemoryURLRepo(filePath string) (*InMemoryURLRepo, error) {
 func (r *InMemoryURLRepo) saveToFile() error {
 	// преобразование данных для сериализации
 	entries := make([]urlEntry, 0, len(r.urls))
-	for shortURL, originalURL := range r.urls {
-		entries = append(entries, urlEntry{
-			ShortURL:    shortURL,
-			OriginalURL: originalURL,
-		})
+	for _, entry := range r.urls {
+		entries = append(entries, entry)
 	}
 
 	// сериализация в JSON
@@ -121,7 +122,13 @@ func (r *InMemoryURLRepo) saveToFile() error {
 }
 
 // Save сохраняет URL по заданному ID.
-func (r *InMemoryURLRepo) Save(id, url, userID string) error {
+func (r *InMemoryURLRepo) Save(ctx context.Context, id, url, userID string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -139,8 +146,15 @@ func (r *InMemoryURLRepo) Save(id, url, userID string) error {
 		return fmt.Errorf("ID %q for URL %q already exists", id, url)
 	}
 
+	entry := urlEntry{
+		ShortURL:    id,
+		OriginalURL: url,
+		UserID:      userID,
+		IsDeleted:   false,
+	}
+
 	// сохранение в память
-	r.urls[id] = url
+	r.urls[id] = entry
 	r.urlToID[key] = id
 
 	// запись в файл
@@ -152,9 +166,15 @@ func (r *InMemoryURLRepo) Save(id, url, userID string) error {
 }
 
 // SaveMany сохраняет несколько коротких URL.
-func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry, userID string) error {
+func (r *InMemoryURLRepo) SaveMany(ctx context.Context, entries []service.BatchEntry, userID string) error {
 	if len(entries) == 0 {
 		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
 	r.mu.Lock()
@@ -171,7 +191,13 @@ func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry, userID string) 
 			continue
 		}
 		// сохранение в память
-		r.urls[entry.ID] = entry.OriginalURL
+		newEntry := urlEntry{
+			ShortURL:    entry.ID,
+			OriginalURL: entry.OriginalURL,
+			UserID:      userID,
+			IsDeleted:   false,
+		}
+		r.urls[entry.ID] = newEntry
 		r.urlToID[key] = entry.ID
 	}
 
@@ -184,15 +210,35 @@ func (r *InMemoryURLRepo) SaveMany(entries []service.BatchEntry, userID string) 
 }
 
 // Get возвращает URL по ID или пустую строку с false, если ID не найден.
-func (r *InMemoryURLRepo) Get(id string) (string, bool) {
+func (r *InMemoryURLRepo) Get(ctx context.Context, id string) (service.ResolveResult, bool) {
+	select {
+	case <-ctx.Done():
+		return service.ResolveResult{}, false
+	default:
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	url, ok := r.urls[id]
-	return url, ok
+
+	entry, ok := r.urls[id]
+	if !ok {
+		return service.ResolveResult{}, false
+	}
+
+	return service.ResolveResult{
+		OriginalURL: entry.OriginalURL,
+		IsDeleted:   entry.IsDeleted,
+	}, true
 }
 
 // GetExistingID возвращает существующий ID по оригинальному URL.
-func (r *InMemoryURLRepo) GetExistingID(url string, userID string) (string, bool) {
+func (r *InMemoryURLRepo) GetExistingID(ctx context.Context, url string, userID string) (string, bool) {
+	select {
+	case <-ctx.Done():
+		return "", false
+	default:
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -202,21 +248,72 @@ func (r *InMemoryURLRepo) GetExistingID(url string, userID string) (string, bool
 }
 
 // GetUserURLs возвращает все URL пользователя.
-func (r *InMemoryURLRepo) GetUserURLs(userID string) ([]service.URLRecord, error) {
+func (r *InMemoryURLRepo) GetUserURLs(ctx context.Context, userID string) ([]service.URLRecord, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var records []service.URLRecord
-	for shortID, originalURL := range r.urls {
-		key := originalURL + "|" + userID
+	for shortID, entry := range r.urls {
+		if entry.IsDeleted {
+			continue
+		}
+		key := entry.OriginalURL + "|" + userID
 		if storedID, exists := r.urlToID[key]; exists && storedID == shortID {
 			records = append(records, service.URLRecord{
 				ShortURL:    shortID,
-				OriginalURL: originalURL,
+				OriginalURL: entry.OriginalURL,
 			})
 		}
 	}
 	return records, nil
+}
+
+// MarkAsDeleted помечает указанные short_url как удалённые для конкретного пользователя.
+func (r *InMemoryURLRepo) MarkAsDeleted(ctx context.Context, ids []string, userID string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, id := range ids {
+		entry, exists := r.urls[id]
+		if !exists {
+			continue
+		}
+
+		key := entry.OriginalURL + "|" + userID
+		storedID, ok := r.urlToID[key]
+
+		// если записи нет или id не совпадает - пропускаем
+		if !ok || storedID != id {
+			continue
+		}
+
+		// сохранение в память с обновленным флагом
+		entry.IsDeleted = true
+		r.urls[id] = entry
+	}
+
+	// запись в файл
+	if r.file != nil {
+		return r.saveToFile()
+	}
+
+	return nil
 }
 
 // Close - корректное закрытие файла при завершении программы.
@@ -230,6 +327,11 @@ func (r *InMemoryURLRepo) Close() error {
 }
 
 // Ping проверяет доступность хранилища.
-func (r *InMemoryURLRepo) Ping() error {
-	return nil
+func (r *InMemoryURLRepo) Ping(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
 }

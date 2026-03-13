@@ -53,16 +53,13 @@ func NewPostgresURLRepo(dsn string, logger *slog.Logger) (*PostgresURLRepo, erro
 }
 
 // Ping проверяет соединение с базой данных.
-func (r *PostgresURLRepo) Ping() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
+func (r *PostgresURLRepo) Ping(ctx context.Context) error {
 	return r.db.PingContext(ctx)
 }
 
 // Save сохраняет короткий URL в БД.
-func (r *PostgresURLRepo) Save(id, url, userID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (r *PostgresURLRepo) Save(ctx context.Context, id, url, userID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	query := `
@@ -90,12 +87,12 @@ func (r *PostgresURLRepo) Save(id, url, userID string) error {
 }
 
 // SaveMany сохраняет несколько коротких URL в БД.
-func (r *PostgresURLRepo) SaveMany(entries []service.BatchEntry, userID string) error {
+func (r *PostgresURLRepo) SaveMany(ctx context.Context, entries []service.BatchEntry, userID string) error {
 	if len(entries) == 0 {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	args := make([]any, 0, len(entries)*3)
@@ -118,23 +115,23 @@ func (r *PostgresURLRepo) SaveMany(entries []service.BatchEntry, userID string) 
 }
 
 // Get возвращает оригинальный URL по короткому идентификатору.
-func (r *PostgresURLRepo) Get(id string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (r *PostgresURLRepo) Get(ctx context.Context, id string) (service.ResolveResult, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	var originalURL string
-	err := r.db.QueryRowContext(ctx, "SELECT original_url FROM urls WHERE id = $1", id).Scan(&originalURL)
+	var res service.ResolveResult
+	err := r.db.QueryRowContext(ctx, "SELECT original_url, is_deleted FROM urls WHERE id = $1", id).Scan(&res.OriginalURL, &res.IsDeleted)
 
 	if err != nil {
-		return "", false
+		return service.ResolveResult{}, false
 	}
 
-	return originalURL, true
+	return res, true
 }
 
 // GetExistingID возвращает существующий ID по оригинальному URL.
-func (r *PostgresURLRepo) GetExistingID(url, userID string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (r *PostgresURLRepo) GetExistingID(ctx context.Context, url, userID string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	var id string
@@ -147,11 +144,11 @@ func (r *PostgresURLRepo) GetExistingID(url, userID string) (string, bool) {
 }
 
 // GetUserURLs возвращает все URL пользователя.
-func (r *PostgresURLRepo) GetUserURLs(userID string) ([]service.URLRecord, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func (r *PostgresURLRepo) GetUserURLs(ctx context.Context, userID string) ([]service.URLRecord, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, original_url FROM urls WHERE user_id = $1`
+	query := `SELECT id, original_url FROM urls WHERE user_id = $1 AND is_deleted=false`
 	rows, err := r.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query user URLs: %w", err)
@@ -172,6 +169,35 @@ func (r *PostgresURLRepo) GetUserURLs(userID string) ([]service.URLRecord, error
 	}
 
 	return records, rows.Err()
+}
+
+// MarkAsDeleted помечает указанные short_url как удалённые для конкретного пользователя.
+func (r *PostgresURLRepo) MarkAsDeleted(ctx context.Context, ids []string, userID string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	args := make([]any, 0, len(ids)*2)
+	var query strings.Builder
+	query.WriteString("UPDATE urls SET is_deleted = true WHERE (id, user_id) IN (")
+	for i, id := range ids {
+		if i > 0 {
+			query.WriteString(", ")
+		}
+		fmt.Fprintf(&query, "($%d, $%d)", i*2+1, i*2+2)
+		args = append(args, id, userID)
+	}
+	query.WriteString(`) AND is_deleted = false`)
+
+	_, err := r.db.ExecContext(ctx, query.String(), args...)
+	if err != nil {
+		return fmt.Errorf("failed to mark URLs as deleted: %w", err)
+	}
+
+	return nil
 }
 
 // Close закрывает соединение с БД.

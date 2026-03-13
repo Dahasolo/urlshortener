@@ -25,6 +25,7 @@ func NewRouter(svc *service.Service, baseURL, secretKey string, appLogger *slog.
 	r.Get("/ping", handler.PingHandler(svc))
 	r.Post("/api/shorten/batch", handler.BatchShortenHandler(svc, baseURL, secretKey, appLogger))
 	r.Get("/api/user/urls", handler.UserURLsHandler(svc, baseURL, secretKey, appLogger))
+	r.Delete("/api/user/urls", handler.DeleteUserURLsHandler(svc, secretKey, appLogger))
 
 	return r
 }

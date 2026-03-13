@@ -1,15 +1,21 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"time"
 
 	"github.com/Dahasolo/urlshortener/internal/config"
 	"github.com/Dahasolo/urlshortener/internal/logger"
 	"github.com/Dahasolo/urlshortener/internal/repository"
 	"github.com/Dahasolo/urlshortener/internal/router"
 	"github.com/Dahasolo/urlshortener/internal/service"
+	"golang.org/x/sync/errgroup"
 )
 
 // App инкапсулирует все зависимости приложения.
@@ -51,7 +57,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// Инициализация сервиса
-	svc := service.NewService(repo)
+	svc := service.NewService(repo, logger)
 
 	// Инициализация роутера
 	r := router.NewRouter(svc, cfg.BaseURL, cfg.SecretKey, logger)
@@ -63,8 +69,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 		svc:    svc,
 		router: r,
 		cleanup: func() {
-			if err := repo.Close(); err != nil {
-				logger.Error("failed to close repository file", "error", err)
+			if svc != nil {
+				if err := svc.Close(); err != nil {
+					logger.Error("failed to close service", "error", err)
+				}
 			}
 		},
 	}
@@ -82,9 +90,50 @@ func NewAppFromFlags() (*App, error) {
 	return NewApp(cfg)
 }
 
-// Run запускает HTTP сервер.
+// Run запускает HTTP сервер с graceful shutdown.
 func (a *App) Run() error {
 	a.logger.Info("running server on", "address", a.cfg.ServerAddress)
-	defer a.cleanup()
-	return http.ListenAndServe(a.cfg.ServerAddress, a.router)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	g, ctx := errgroup.WithContext(ctx)
+	server := &http.Server{Addr: a.cfg.ServerAddress, Handler: a.router}
+
+	g.Go(func() error {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server failed: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		<-ctx.Done()
+		a.logger.Info("shutting down HTTP server")
+
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("server shutdown failed: %w", err)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		defer a.logger.Info("server has been shutdown")
+		<-ctx.Done()
+		a.cleanup()
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	}
+
+	a.logger.Info("application stopped gracefully")
+	return nil
 }

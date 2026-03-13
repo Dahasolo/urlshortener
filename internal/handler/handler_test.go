@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Dahasolo/urlshortener/internal/auth"
 	"github.com/Dahasolo/urlshortener/internal/mocks"
@@ -78,10 +79,10 @@ func TestShortenHandler(t *testing.T) {
 			// Подготовка зависимостей
 			repo := &mocks.URLRepository{}
 			if tt.expectSave {
-				repo.On("Save", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+				repo.On("Save", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 			}
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := ShortenHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -115,7 +116,10 @@ func TestRedirectHandler(t *testing.T) {
 			name: "existing ID", // redirect
 			path: "/abc123",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Get", "abc123").Return("https://example.com", true).Once()
+				r.On("Get", mock.Anything, "abc123").Return(service.ResolveResult{
+					OriginalURL: "https://example.com",
+					IsDeleted:   false,
+				}, true).Once()
 			},
 			expectedCode: http.StatusTemporaryRedirect,
 			expectedLoc:  "https://example.com",
@@ -124,7 +128,7 @@ func TestRedirectHandler(t *testing.T) {
 			name: "non-existing ID", // 404
 			path: "/notfound",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Get", "notfound").Return("", false).Once()
+				r.On("Get", mock.Anything, "notfound").Return(service.ResolveResult{}, false).Once()
 			},
 			expectedCode: http.StatusNotFound,
 		},
@@ -143,8 +147,8 @@ func TestRedirectHandler(t *testing.T) {
 			if tt.prepareRepo != nil {
 				tt.prepareRepo(repo)
 			}
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := RedirectHandler(svc, logger)
 
 			// Создание фейкового запроса
@@ -184,7 +188,7 @@ func TestShortenJSONHandler(t *testing.T) {
 			body:        `{"url": "https://example.com"}`,
 			contentType: "application/json",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Save", mock.Anything, "https://example.com", mock.Anything).Return(nil).Once()
+				r.On("Save", mock.Anything, mock.Anything, "https://example.com", mock.Anything).Return(nil).Once()
 			},
 			expectedCode: http.StatusCreated,
 			expectJSON:   true,
@@ -229,7 +233,7 @@ func TestShortenJSONHandler(t *testing.T) {
 			body:        `{"url": "https://example.com/path/to/page"}`,
 			contentType: "application/json",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("Save", mock.Anything, "https://example.com/path/to/page", mock.Anything).Return(nil).Once()
+				r.On("Save", mock.Anything, mock.Anything, "https://example.com/path/to/page", mock.Anything).Return(nil).Once()
 			},
 			expectedCode: http.StatusCreated,
 			expectJSON:   true,
@@ -243,8 +247,8 @@ func TestShortenJSONHandler(t *testing.T) {
 			if tt.prepareRepo != nil {
 				tt.prepareRepo(repo)
 			}
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := ShortenJSONHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -286,8 +290,8 @@ func TestBatchShortenHandler(t *testing.T) {
 			body:        `[{"correlation_id":"a","original_url":"https://example.com"}]`,
 			contentType: "application/json",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("SaveMany", mock.Anything, mock.Anything).Return(nil).Once()
-				r.On("GetExistingID", "https://example.com", mock.Anything).Return("", false).Once()
+				r.On("SaveMany", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+				r.On("GetExistingID", mock.Anything, "https://example.com", mock.Anything).Return("", false).Once()
 			},
 			expectedCode:  http.StatusCreated,
 			expectJSON:    true,
@@ -301,11 +305,11 @@ func TestBatchShortenHandler(t *testing.T) {
 			]`,
 			contentType: "application/json",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("SaveMany", mock.MatchedBy(func(entries []service.BatchEntry) bool {
+				r.On("SaveMany", mock.Anything, mock.MatchedBy(func(entries []service.BatchEntry) bool {
 					return len(entries) == 2
 				}), mock.Anything).Return(nil).Once()
-				r.On("GetExistingID", "https://example1.com", mock.Anything).Return("", false).Once()
-				r.On("GetExistingID", "https://example2.com", mock.Anything).Return("", false).Once()
+				r.On("GetExistingID", mock.Anything, "https://example1.com", mock.Anything).Return("", false).Once()
+				r.On("GetExistingID", mock.Anything, "https://example2.com", mock.Anything).Return("", false).Once()
 			},
 			expectedCode:  http.StatusCreated,
 			expectJSON:    true,
@@ -348,8 +352,8 @@ func TestBatchShortenHandler(t *testing.T) {
 			if tt.prepareRepo != nil {
 				tt.prepareRepo(repo)
 			}
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := BatchShortenHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -420,14 +424,14 @@ func TestShortenHandler_DuplicateURL(t *testing.T) {
 			repo := &mocks.URLRepository{}
 
 			// при ошибке дубликата сервис вернёт ErrURLAlreadyExists
-			repo.On("Save", mock.Anything, tt.originalURL, mock.Anything).
+			repo.On("Save", mock.Anything, mock.Anything, tt.originalURL, mock.Anything).
 				Return(&service.ErrURLAlreadyExists{
 					ExistingID:  tt.existingID,
 					OriginalURL: tt.originalURL,
 				}).Once()
 
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := ShortenHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -479,14 +483,14 @@ func TestShortenJSONHandler_DuplicateURL(t *testing.T) {
 			repo := &mocks.URLRepository{}
 
 			// при ошибке дубликата сервис вернёт ErrURLAlreadyExists
-			repo.On("Save", mock.Anything, tt.originalURL, mock.Anything).
+			repo.On("Save", mock.Anything, mock.Anything, tt.originalURL, mock.Anything).
 				Return(&service.ErrURLAlreadyExists{
 					ExistingID:  tt.existingID,
 					OriginalURL: tt.originalURL,
 				}).Once()
 
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := ShortenJSONHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -542,11 +546,11 @@ func TestShortenHandler_ServiceError(t *testing.T) {
 			repo := &mocks.URLRepository{}
 
 			// непредвиденная ошибка
-			repo.On("Save", mock.Anything, mock.Anything, mock.Anything).
+			repo.On("Save", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 				Return(tt.mockError).Times(10)
 
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := ShortenHandler(svc, "http://localhost:8080/", "test-secret-key", logger)
 
 			// Создание фейкового запроса
@@ -579,7 +583,7 @@ func TestUserURLsHandler(t *testing.T) {
 		{
 			name: "new user no urls",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("GetUserURLs", mock.Anything).Return([]service.URLRecord{}, nil).Once()
+				r.On("GetUserURLs", mock.Anything, mock.Anything).Return([]service.URLRecord{}, nil).Once()
 			},
 			expectedCode: http.StatusNoContent,
 			expectCookie: true,
@@ -587,7 +591,7 @@ func TestUserURLsHandler(t *testing.T) {
 		{
 			name: "existing user with urls",
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("GetUserURLs", mock.Anything).Return([]service.URLRecord{
+				r.On("GetUserURLs", mock.Anything, mock.Anything).Return([]service.URLRecord{
 					{ShortURL: "abc123", OriginalURL: "https://example.com"},
 				}, nil).Once()
 			},
@@ -603,7 +607,7 @@ func TestUserURLsHandler(t *testing.T) {
 				return fmt.Sprintf("%s=%s", auth.CookieName, token)
 			}(),
 			prepareRepo: func(r *mocks.URLRepository) {
-				r.On("GetUserURLs", "test-user-12345").Return([]service.URLRecord{}, nil).Once()
+				r.On("GetUserURLs", mock.Anything, "test-user-12345").Return([]service.URLRecord{}, nil).Once()
 			},
 			expectedCode: http.StatusNoContent,
 		},
@@ -622,8 +626,8 @@ func TestUserURLsHandler(t *testing.T) {
 			if tt.prepareRepo != nil {
 				tt.prepareRepo(repo)
 			}
-			svc := service.NewService(repo)
 			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
 			handler := UserURLsHandler(svc, testBaseURL, testSecretKey, logger)
 
 			// Создание фейкового запроса
@@ -665,6 +669,178 @@ func TestUserURLsHandler(t *testing.T) {
 				assert.Empty(t, w.Body.String())
 			}
 
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestDeleteUserURLsHandler(t *testing.T) {
+	const testSecretKey = "test-secret-key"
+
+	tests := []struct {
+		name         string
+		body         string
+		contentType  string
+		cookie       string
+		prepareRepo  func(r *mocks.URLRepository)
+		expectedCode int
+	}{
+		{
+			name:        "valid delete request",
+			body:        `["abc123", "xyz789"]`,
+			contentType: "application/json",
+			cookie: func() string {
+				userID := "test-user-12345"
+				token, _ := auth.SignToken(userID, testSecretKey)
+				return fmt.Sprintf("%s=%s", auth.CookieName, token)
+			}(),
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Close").Return(nil).Once()
+				r.On("MarkAsDeleted", mock.Anything, mock.Anything, mock.Anything).
+					Return(nil).Once()
+			},
+			expectedCode: http.StatusAccepted,
+		},
+		{
+			name:         "invalid content type",
+			body:         `["abc123"]`,
+			contentType:  "text/plain",
+			prepareRepo:  func(r *mocks.URLRepository) { r.On("Close").Return(nil).Once() },
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:        "empty batch",
+			body:        `[]`,
+			contentType: "application/json",
+			cookie: func() string {
+				userID := "test-user-12345"
+				token, _ := auth.SignToken(userID, testSecretKey)
+				return fmt.Sprintf("%s=%s", auth.CookieName, token)
+			}(),
+			prepareRepo:  func(r *mocks.URLRepository) { r.On("Close").Return(nil).Once() },
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+			if tt.prepareRepo != nil {
+				tt.prepareRepo(repo)
+			}
+
+			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
+
+			handler := DeleteUserURLsHandler(svc, testSecretKey, logger)
+
+			// Создание фейкового запроса
+			req := httptest.NewRequest(http.MethodDelete, "/api/user/urls",
+				strings.NewReader(tt.body))
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			if tt.cookie != "" {
+				req.Header.Set("Cookie", tt.cookie)
+			}
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// время на обработку запроса
+			if tt.expectedCode == http.StatusAccepted {
+				time.Sleep(50 * time.Millisecond)
+			}
+			svc.Close()
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRedirectHandler_DeletedURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		prepareRepo  func(r *mocks.URLRepository)
+		expectedCode int
+		expectedLoc  string
+	}{
+		{
+			name: "deleted url",
+			path: "/deleted123",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Close").Return(nil).Once()
+				r.On("Get", mock.Anything, "deleted123").
+					Return(service.ResolveResult{
+						OriginalURL: "https://example.com",
+						IsDeleted:   true,
+					}, true).Once()
+			},
+			expectedCode: http.StatusGone,
+		},
+		{
+			name: "active url",
+			path: "/active123",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Close").Return(nil).Once()
+				r.On("Get", mock.Anything, "active123").
+					Return(service.ResolveResult{
+						OriginalURL: "https://example.com",
+						IsDeleted:   false,
+					}, true).Once()
+			},
+			expectedCode: http.StatusTemporaryRedirect,
+			expectedLoc:  "https://example.com",
+		},
+		{
+			name: "non existing url",
+			path: "/notfound",
+			prepareRepo: func(r *mocks.URLRepository) {
+				r.On("Close").Return(nil).Once()
+				r.On("Get", mock.Anything, "notfound").
+					Return(service.ResolveResult{}, false).Once()
+			},
+			expectedCode: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Подготовка зависимостей
+			repo := &mocks.URLRepository{}
+			if tt.prepareRepo != nil {
+				tt.prepareRepo(repo)
+			}
+
+			logger := testLogger(t)
+			svc := service.NewService(repo, logger)
+
+			handler := RedirectHandler(svc, logger)
+
+			// Создание фейкового запроса
+			var params map[string]string
+			if len(tt.path) > 1 {
+				params = map[string]string{"id": tt.path[1:]}
+			}
+			req := newChiRequest(http.MethodGet, tt.path, nil, params)
+			w := httptest.NewRecorder()
+
+			// Вызов хендлера
+			handler(w, req)
+
+			// Проверка статуса
+			assert.Equal(t, tt.expectedCode, w.Code)
+
+			// Если ожидаем, что должен быть заголовок Location - проверяем
+			if tt.expectedLoc != "" {
+				assert.Equal(t, tt.expectedLoc, w.Header().Get("Location"))
+			}
+			svc.Close()
 			repo.AssertExpectations(t)
 		})
 	}
