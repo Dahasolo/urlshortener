@@ -128,7 +128,7 @@ func ShortenHandler(svc *service.Service, baseURL, secretKey string, logger *slo
 			return
 		}
 
-		id, err := svc.Shorten(originalURL, userID)
+		id, err := svc.Shorten(r.Context(), originalURL, userID)
 		if err != nil {
 			logger.Error("shorten failed", "url", originalURL, "user_id", userID, "error", err)
 			handleShortenError(w, logger, err, originalURL, baseURL, false)
@@ -153,13 +153,18 @@ func RedirectHandler(svc *service.Service, logger *slog.Logger) http.HandlerFunc
 			return
 		}
 
-		fullURL, ok := svc.Resolve(id)
+		res, ok := svc.Resolve(r.Context(), id)
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		w.Header().Set("Location", fullURL)
+		if res.IsDeleted {
+			w.WriteHeader(http.StatusGone)
+			return
+		}
+
+		w.Header().Set("Location", res.OriginalURL)
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}
 }
@@ -190,7 +195,7 @@ func ShortenJSONHandler(svc *service.Service, baseURL, secretKey string, logger 
 			return
 		}
 
-		id, err := svc.Shorten(req.URL, userID)
+		id, err := svc.Shorten(r.Context(), req.URL, userID)
 		if err != nil {
 			logger.Error("shorten failed", "url", req.URL, "user_id", userID, "error", err)
 			handleShortenError(w, logger, err, req.URL, baseURL, true)
@@ -248,7 +253,7 @@ func BatchShortenHandler(svc *service.Service, baseURL, secretKey string, logger
 			})
 		}
 
-		results, err := svc.BatchShorten(svcRequests, userID)
+		results, err := svc.BatchShorten(r.Context(), svcRequests, userID)
 		if err != nil {
 			logger.Error("batch shorten failed", "error", err)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -286,7 +291,7 @@ func UserURLsHandler(svc *service.Service, baseURL, secretKey string, logger *sl
 			if setErr := auth.SetAuthCookie(w, userID, secretKey); setErr != nil {
 				logger.Error("failed to set auth cookie", "error", setErr)
 			}
-			serveUserURLs(w, svc, baseURL, userID, logger)
+			serveUserURLs(w, r, svc, baseURL, userID, logger)
 			return
 		}
 
@@ -305,15 +310,15 @@ func UserURLsHandler(svc *service.Service, baseURL, secretKey string, logger *sl
 			return
 		}
 
-		serveUserURLs(w, svc, baseURL, userID, logger)
+		serveUserURLs(w, r, svc, baseURL, userID, logger)
 	}
 }
 
 // serveUserURLs записывает список сокращённых URL пользователя в HTTP-ответ.
-func serveUserURLs(w http.ResponseWriter, svc *service.Service,
+func serveUserURLs(w http.ResponseWriter, r *http.Request, svc *service.Service,
 	baseURL, userID string, logger *slog.Logger) {
 
-	urls, err := svc.GetUserURLs(userID)
+	urls, err := svc.GetUserURLs(r.Context(), userID)
 	if err != nil {
 		logger.Error("failed to get user URLs", "user_id", userID, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -334,4 +339,42 @@ func serveUserURLs(w http.ResponseWriter, svc *service.Service,
 		})
 	}
 	json.NewEncoder(w).Encode(responses)
+}
+
+// DeleteUserURLsHandler обрабатывает запросы на удаление URL.
+func DeleteUserURLsHandler(svc *service.Service, secretKey string, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		contentType := r.Header.Get("Content-Type")
+		if contentType != "application/json" {
+			http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+			return
+		}
+
+		var ids []string
+		if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if len(ids) == 0 {
+			http.Error(w, "empty batch", http.StatusBadRequest)
+			return
+		}
+		for _, id := range ids {
+			if id == "" {
+				http.Error(w, "empty ID in batch", http.StatusBadRequest)
+				return
+			}
+		}
+
+		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		svc.DeleteUserURLs(ids, userID)
+
+		w.WriteHeader(http.StatusAccepted)
+	}
 }
