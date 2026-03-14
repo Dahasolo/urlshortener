@@ -43,27 +43,6 @@ type UserURLResponse struct {
 	OriginalURL string `json:"original_url"`
 }
 
-// getUserIDFromRequest извлекает или создаёт userID из куки.
-func getUserIDFromRequest(r *http.Request, w http.ResponseWriter, secretKey string, logger *slog.Logger) (string, bool, error) {
-
-	userID, err := auth.GetUserIDFromRequest(r, secretKey)
-	if err != nil {
-		userID, err = auth.GenerateUserID()
-		if err != nil {
-			logger.Error("failed to generate user ID", "error", err)
-			return "", false, err
-		}
-
-		if err := auth.SetAuthCookie(w, userID, secretKey); err != nil {
-			logger.Error("failed to set auth cookie", "error", err)
-		}
-
-		return userID, true, nil
-	}
-
-	return userID, false, nil
-}
-
 // buildShortURL строит полный короткий URL.
 func buildShortURL(baseURL, id string) string {
 	shortURL, _ := url.JoinPath(baseURL, id)
@@ -122,7 +101,7 @@ func ShortenHandler(svc *service.Service, baseURL, secretKey string, logger *slo
 			return
 		}
 
-		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		userID, _, err := auth.ExtractUserID(r, w, secretKey, logger)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -189,7 +168,7 @@ func ShortenJSONHandler(svc *service.Service, baseURL, secretKey string, logger 
 			return
 		}
 
-		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		userID, _, err := auth.ExtractUserID(r, w, secretKey, logger)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -239,7 +218,7 @@ func BatchShortenHandler(svc *service.Service, baseURL, secretKey string, logger
 			}
 		}
 
-		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		userID, _, err := auth.ExtractUserID(r, w, secretKey, logger)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -278,35 +257,16 @@ func BatchShortenHandler(svc *service.Service, baseURL, secretKey string, logger
 // UserURLsHandler возвращает все URL пользователя.
 func UserURLsHandler(svc *service.Service, baseURL, secretKey string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(auth.CookieName)
+		userID, _, err := auth.ExtractUserID(r, w, secretKey, logger)
 
-		// Если куки нет - создаём нового пользователя
-		if errors.Is(err, http.ErrNoCookie) {
-			userID, genErr := auth.GenerateUserID()
-			if genErr != nil {
-				logger.Error("failed to generate user ID", "error", genErr)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		if err != nil {
+			if errors.Is(err, auth.ErrInvalidToken) {
+				logger.Warn("invalid auth token", "error", err)
+				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			if setErr := auth.SetAuthCookie(w, userID, secretKey); setErr != nil {
-				logger.Error("failed to set auth cookie", "error", setErr)
-			}
-			serveUserURLs(w, r, svc, baseURL, userID, logger)
-			return
-		}
 
-		// Ошибка чтения куки - 401
-		if err != nil {
-			logger.Warn("failed to read cookie", "error", err)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-
-		// Если кука есть - проверяем подпись
-		userID, verifyErr := auth.VerifyToken(cookie.Value, secretKey)
-		if verifyErr != nil {
-			logger.Warn("invalid auth token", "error", verifyErr)
-			w.WriteHeader(http.StatusUnauthorized)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 
@@ -367,7 +327,7 @@ func DeleteUserURLsHandler(svc *service.Service, secretKey string, logger *slog.
 			}
 		}
 
-		userID, _, err := getUserIDFromRequest(r, w, secretKey, logger)
+		userID, _, err := auth.ExtractUserID(r, w, secretKey, logger)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return

@@ -281,9 +281,9 @@ func (s *Service) Ping(ctx context.Context) error {
 
 // Close завершает работу сервиса, останавливая фоновые горутины.
 func (s *Service) Close() error {
-	s.cancel()
 	close(s.deleteCh)
 	s.wg.Wait()
+	s.cancel()
 
 	if s.repo != nil {
 		return s.repo.Close()

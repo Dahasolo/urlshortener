@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -16,13 +17,20 @@ const (
 	CookieMaxAge = 30 * 24 * 60 * 60 // 30 дней
 )
 
+var (
+	ErrNoCookie        = errors.New("no auth cookie")
+	ErrInvalidToken    = errors.New("invalid token format")
+	ErrGenerateFailed  = errors.New("failed to generate user ID")
+	ErrSetCookieFailed = errors.New("failed to set auth cookie")
+)
+
 // GenerateUserID генерирует уникальный ID пользователя.
 func GenerateUserID() (string, error) {
 	b := make([]byte, 16)
 
 	_, err := rand.Read(b)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate user ID: %w", err)
+		return "", fmt.Errorf("%v: %w", ErrGenerateFailed, err)
 	}
 
 	return hex.EncodeToString(b), nil
@@ -42,12 +50,12 @@ func SignToken(userID, secretKey string) (string, error) {
 func VerifyToken(token, secretKey string) (string, error) {
 	userID, signatureHex, ok := strings.Cut(token, ".")
 	if !ok {
-		return "", errors.New("invalid token format")
+		return "", fmt.Errorf("%w: invalid format", ErrInvalidToken)
 	}
 
 	receivedSig, err := hex.DecodeString(signatureHex)
 	if err != nil {
-		return "", fmt.Errorf("invalid signature encoding")
+		return "", fmt.Errorf("%w: invalid signature encoding: %v", ErrInvalidToken, err)
 	}
 
 	h := hmac.New(sha256.New, []byte(secretKey))
@@ -55,7 +63,7 @@ func VerifyToken(token, secretKey string) (string, error) {
 	expectedSig := h.Sum(nil)
 
 	if !hmac.Equal(receivedSig, expectedSig) {
-		return "", fmt.Errorf("invalid signature")
+		return "", fmt.Errorf("%w: invalid signature", ErrInvalidToken)
 	}
 
 	return string(userID), nil
@@ -65,7 +73,7 @@ func VerifyToken(token, secretKey string) (string, error) {
 func SetAuthCookie(w http.ResponseWriter, userID, secretKey string) error {
 	token, err := SignToken(userID, secretKey)
 	if err != nil {
-		return err
+		return fmt.Errorf("%v: %w", ErrSetCookieFailed, err)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -80,17 +88,35 @@ func SetAuthCookie(w http.ResponseWriter, userID, secretKey string) error {
 	return nil
 }
 
-// GetUserIDFromRequest извлекает и проверяет user_id из запроса.
-func GetUserIDFromRequest(r *http.Request, secretKey string) (string, error) {
+// ExtractUserID извлекает user_id из куки.
+func ExtractUserID(r *http.Request, w http.ResponseWriter, secretKey string, logger *slog.Logger) (string, bool, error) {
 	cookie, err := r.Cookie(CookieName)
-	if err != nil {
-		return "", fmt.Errorf("no auth cookie")
+
+	// Если куки нет - создаём нового пользователя
+	if errors.Is(err, http.ErrNoCookie) {
+		userID, genErr := GenerateUserID()
+		if genErr != nil {
+			logger.Error("failed to generate user ID", "error", genErr)
+			return "", false, genErr
+		}
+		if setErr := SetAuthCookie(w, userID, secretKey); setErr != nil {
+			logger.Error("failed to set auth cookie", "error", setErr)
+			return "", false, setErr
+		}
+		return userID, true, nil
 	}
 
-	userID, err := VerifyToken(cookie.Value, secretKey)
+	// Ошибка чтения куки
 	if err != nil {
-		return "", fmt.Errorf("invalid auth token")
+		logger.Warn("failed to read cookie", "error", err)
+		return "", false, fmt.Errorf("failed to read cookie: %w", err)
 	}
 
-	return userID, nil
+	// Если кука есть - проверяем подпись
+	userID, verifyErr := VerifyToken(cookie.Value, secretKey)
+	if verifyErr != nil {
+		return "", false, ErrInvalidToken
+	}
+
+	return userID, false, nil
 }
